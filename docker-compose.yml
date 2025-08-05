@@ -1,0 +1,40 @@
+
+services:
+  api:
+    build: .
+    container_name: ai-validator-api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - db
+      - mongo
+    environment:
+      DATABASE_URL: postgres://user:pass@db:5432/ai_db
+      MONGO_URL: mongodb://mongo:27017/pdfstore
+    volumes:
+      - .:/app
+    restart: always
+
+  db:
+    image: postgres:14
+    container_name: ai-validator-db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: pass
+      POSTGRES_DB: ai_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+  mongo:
+    image: mongo
+    container_name: ai-validator-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  db-data:
+  mongo-data:
