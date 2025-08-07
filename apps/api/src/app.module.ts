@@ -1,13 +1,18 @@
+// src/app.module.ts
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-
-import { MongooseModule } from '@nestjs/mongoose';
+import { ComparisonModule } from './comparison/comparison.module';
+import { OpenaiModule } from './openai/openai.module';
 
 @Module({
   imports: [
+    // Makes environment variables available application-wide
     ConfigModule.forRoot({
-      isGlobal: true, // So you don't need to import it in every module
+      isGlobal: true,
     }),
-      ],
+    // Feature modules
+    ComparisonModule,
+    OpenaiModule,
+  ],
 })
 export class AppModule {}
