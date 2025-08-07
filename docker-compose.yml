@@ -1,7 +1,10 @@
+version: '3.8'
 
 services:
   api:
-    build: .
+    build:
+      context: ./apps/api
+      dockerfile: Dockerfile
     container_name: ai-validator-api
     ports:
       - "3000:3000"
@@ -12,7 +15,35 @@ services:
       DATABASE_URL: postgres://user:pass@db:5432/ai_db
       MONGO_URL: mongodb://mongo:27017/pdfstore
     volumes:
-      - .:/app
+      - ./apps/api:/app
+    restart: always
+
+  document-api:
+    build:
+      context: ./apps/document-api
+      dockerfile: Dockerfile
+    container_name: ai-validator-document-api
+    ports:
+      - "3001:3000"
+    depends_on:
+      - db
+      - mongo
+    environment:
+      DATABASE_URL: postgres://user:pass@db:5432/ai_db
+      MONGO_URL: mongodb://mongo:27017/pdfstore
+    volumes:
+      - ./apps/document-api:/app
+    restart: always
+
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: ai-validator-web
+    ports:
+      - "3002:3000"
+    volumes:
+      - ./apps/web:/app
     restart: always
 
   db:

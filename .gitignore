@@ -1,7 +1,10 @@
 # compiled output
-/dist
-/node_modules
-/build
+**/node_modules
+**/dist
+**/build
+**/.next
+**/.turbo
+
 
 # Logs
 logs
