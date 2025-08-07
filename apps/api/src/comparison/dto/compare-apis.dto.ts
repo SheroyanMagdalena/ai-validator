@@ -6,3 +6,4 @@ export class CompareApisDto {
 
   @IsUrl()
   readonly apiUrl2: string;
+}
