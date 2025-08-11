@@ -1,13 +1,15 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-
-import { MongooseModule } from '@nestjs/mongoose';
+import { ComparisonModule } from './comparison/comparison.module';
+import * as path from 'path';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
-      isGlobal: true, // So you don't need to import it in every module
+      isGlobal: true, 
+      envFilePath: [path.resolve(__dirname, '../../../.env')],
     }),
+    ComparisonModule,
       ],
 })
 export class AppModule {}
