@@ -1,4 +1,4 @@
-version: '3.8'
+version: "3.8"
 
 services:
   api:
@@ -7,15 +7,28 @@ services:
       dockerfile: Dockerfile
     container_name: ai-validator-api
     ports:
-      - "3000:3000"
-    depends_on:
+      - "3000:3000" 
       - db
       - mongo
+      - report
+      - document-api
     environment:
+      # DBs
       DATABASE_URL: postgres://user:pass@db:5432/ai_db
       MONGO_URL: mongodb://mongo:27017/pdfstore
+      REPORT_SERVICE_URL: http://report:8000
+      DOCUMENT_API_URL: http://document-api:3000
+
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3002}
+
+      DOCUMENT_API_PUBLIC_BASE: ${DOCUMENT_API_PUBLIC_BASE:-http://localhost:3001}
+
+      # OpenAI etc. can also be read from .env if you prefer:
+    env_file:
+      - ./.env
     volumes:
       - ./apps/api:/app
+      - /app/node_modules
     restart: always
 
   document-api:
@@ -24,15 +37,27 @@ services:
       dockerfile: Dockerfile
     container_name: ai-validator-document-api
     ports:
-      - "3001:3000"
+      - "3001:3000" 
     depends_on:
-      - db
       - mongo
     environment:
-      DATABASE_URL: postgres://user:pass@db:5432/ai_db
       MONGO_URL: mongodb://mongo:27017/pdfstore
+      GRIDFS_BUCKET: pdfs
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3002}
+    env_file:
+      - ./.env
     volumes:
       - ./apps/document-api:/app
+      - /app/node_modules
+    restart: always
+
+  report:
+    build:
+      context: ./services/report-python
+      dockerfile: Dockerfile
+    container_name: ai-validator-report
+    ports:
+      - "8000:8000" 
     restart: always
 
   web:
@@ -41,9 +66,15 @@ services:
       dockerfile: Dockerfile
     container_name: ai-validator-web
     ports:
-      - "3002:3000"
+      - "3002:3000" 
+    environment:
+     
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3000}
+    env_file:
+      - ./.env
     volumes:
       - ./apps/web:/app
+      - /app/node_modules
     restart: always
 
   db:
@@ -57,14 +88,16 @@ services:
       - "5432:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
+    restart: always
 
   mongo:
-    image: mongo
+    image: mongo:6
     container_name: ai-validator-mongo
     ports:
       - "27017:27017"
     volumes:
       - mongo-data:/data/db
+    restart: always
 
 volumes:
   db-data:
