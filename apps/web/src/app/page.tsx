@@ -7,8 +7,8 @@ type CompareResult = {
   matches: Match[];
   apiOnly: string[];
   modelOnly: string[];
-  unresolved?: Match[]; // optional if you add abstention later
-  raw?: string;         // fallback if model returned plain text
+  unresolved?: Match[];
+  raw?: string;
 };
 
 export default function HomePage() {
@@ -56,84 +56,78 @@ export default function HomePage() {
   }
 
   return (
-    <main style={{ maxWidth: 960, margin: "40px auto", padding: 24 }}>
-      <h1 style={{ marginBottom: 12 }}>AI Validator – Compare API vs Data Model</h1>
-      <p style={{ color: "#555", marginBottom: 24 }}>
+    <main className="max-w-3xl mx-auto my-10 p-6">
+      <h1 className="text-2xl font-bold mb-3">AI Validator – Compare API vs Data Model</h1>
+      <p className="text-gray-600 dark:text-gray-300 mb-6">
         Upload your API sample/spec (JSON/YAML) and Data Model (JSON schema). We’ll compare fields and show matches & differences.
       </p>
 
-      <form onSubmit={handleSubmit} style={{
-        display: "grid",
-        gap: 16,
-        padding: 16,
-        border: "1px solid #eee",
-        borderRadius: 12
-      }}>
-        <label style={{ display: "grid", gap: 8 }}>
-          <span>API file (.json / .yaml)</span>
+      <form
+        onSubmit={handleSubmit}
+        className="grid gap-4 p-4 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900"
+      >
+        <label className="grid gap-2">
+          <span className="font-medium">API file (.json / .yaml)</span>
           <input
             type="file"
             accept=".json,.yaml,.yml,application/json,text/yaml"
             onChange={(e) => setApiFile(e.target.files?.[0] || null)}
+            className="border border-gray-300 dark:border-gray-600 rounded p-2 bg-gray-50 dark:bg-gray-800"
           />
         </label>
 
-        <label style={{ display: "grid", gap: 8 }}>
-          <span>Data model file (.json)</span>
+        <label className="grid gap-2">
+          <span className="font-medium">Data model file (.json)</span>
           <input
             type="file"
             accept=".json,application/json"
             onChange={(e) => setModelFile(e.target.files?.[0] || null)}
+            className="border border-gray-300 dark:border-gray-600 rounded p-2 bg-gray-50 dark:bg-gray-800"
           />
         </label>
 
         <button
           type="submit"
           disabled={loading || !apiFile || !modelFile}
-          style={{
-            padding: "10px 14px",
-            borderRadius: 8,
-            border: "1px solid #222",
-            background: loading ? "#f3f3f3" : "#111",
-            color: loading ? "#333" : "#fff",
-            cursor: loading ? "default" : "pointer"
-          }}
+          className={`px-4 py-2 rounded border text-white transition 
+            ${loading ? "bg-gray-400 cursor-not-allowed" : "bg-gray-900 hover:bg-gray-800"}
+          `}
         >
           {loading ? "Comparing…" : "Compare"}
         </button>
 
-        {error && <div style={{ color: "crimson" }}>{error}</div>}
+        {error && <div className="text-red-600">{error}</div>}
       </form>
 
       {result && (
-        <section style={{ marginTop: 32, display: "grid", gap: 24 }}>
-          {"raw" in result && result.raw && (
-            <div style={{ background: "#fff6e5", border: "1px solid #ffe3ad", padding: 12, borderRadius: 8 }}>
+        <section className="mt-8 grid gap-6">
+          {result.raw && (
+            <div className="bg-amber-50 border border-amber-200 p-3 rounded">
               <strong>Note:</strong> Model returned non-JSON. Showing raw output:
-              <pre style={{ whiteSpace: "pre-wrap", marginTop: 8 }}>{result.raw}</pre>
+              <pre className="whitespace-pre-wrap mt-2">{result.raw}</pre>
             </div>
           )}
 
           {result.matches?.length > 0 && (
             <div>
-              <h2>Matches ({result.matches.length})</h2>
-              <div style={{ overflowX: "auto" }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+              <h2 className="text-xl font-semibold mb-2">Matches ({result.matches.length})</h2>
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse">
                   <thead>
-                    <tr>
-                      <th style={th}>API Field</th>
-                      <th style={th}>Model Field</th>
-                      <th style={th}>Confidence</th>
-                      <th style={th}>Reason</th>
+                    <tr className="bg-gray-100 dark:bg-gray-800">
+                      <th className="text-left border-b p-2">API Field</th>
+                      <th className="text-left border-b p-2">Model Field</th>
+                      <th className="text-left border-b p-2">Confidence</th>
+                      <th className="text-left border-b p-2">Reason</th>
                     </tr>
                   </thead>
                   <tbody>
                     {result.matches.map((m, idx) => (
-                      <tr key={idx}>
-                        <td style={td}>{m.apiField}</td>
-                        <td style={td}>{m.modelField}</td>
-                        <td style={td}>{m.confidence ?? ""}</td>
-                        <td style={td}>{m.reason ?? ""}</td>
+                      <tr key={idx} className="border-b border-gray-200 dark:border-gray-700">
+                        <td className="p-2">{m.apiField}</td>
+                        <td className="p-2">{m.modelField}</td>
+                        <td className="p-2">{m.confidence ?? ""}</td>
+                        <td className="p-2">{m.reason ?? ""}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -144,24 +138,24 @@ export default function HomePage() {
 
           {result.apiOnly?.length > 0 && (
             <div>
-              <h2>API Only ({result.apiOnly.length})</h2>
+              <h2 className="text-xl font-semibold mb-2">API Only ({result.apiOnly.length})</h2>
               <TagList items={result.apiOnly} />
             </div>
           )}
 
           {result.modelOnly?.length > 0 && (
             <div>
-              <h2>Model Only ({result.modelOnly.length})</h2>
+              <h2 className="text-xl font-semibold mb-2">Model Only ({result.modelOnly.length})</h2>
               <TagList items={result.modelOnly} />
             </div>
           )}
 
           {result.unresolved?.length ? (
             <div>
-              <h2>Unresolved ({result.unresolved.length})</h2>
-              <div style={{ display: "grid", gap: 6 }}>
+              <h2 className="text-xl font-semibold mb-2">Unresolved ({result.unresolved.length})</h2>
+              <div className="grid gap-2">
                 {result.unresolved.map((u, i) => (
-                  <div key={i} style={{ border: "1px solid #eee", borderRadius: 8, padding: 10 }}>
+                  <div key={i} className="border border-gray-200 dark:border-gray-700 rounded p-3">
                     <div><strong>API Field:</strong> {u.apiField}</div>
                     <div><strong>Candidate Model Field:</strong> {u.modelField ?? "—"}</div>
                     <div><strong>Confidence:</strong> {u.confidence ?? "—"}</div>
@@ -177,28 +171,14 @@ export default function HomePage() {
   );
 }
 
-const th: React.CSSProperties = {
-  textAlign: "left",
-  borderBottom: "1px solid #eee",
-  padding: "8px 6px"
-};
-
-const td: React.CSSProperties = {
-  borderBottom: "1px solid #f3f3f3",
-  padding: "8px 6px"
-};
-
 function TagList({ items }: { items: string[] }) {
   return (
-    <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+    <div className="flex flex-wrap gap-2">
       {items.map((t, i) => (
-        <span key={i} style={{
-          background: "#f5f5f5",
-          border: "1px solid #eee",
-          borderRadius: 999,
-          padding: "4px 10px",
-          fontSize: 14
-        }}>
+        <span
+          key={i}
+          className="bg-gray-100 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-full px-3 py-1 text-sm"
+        >
           {t}
         </span>
       ))}
