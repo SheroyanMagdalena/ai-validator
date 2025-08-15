@@ -6,6 +6,16 @@ from report_renderer import generate_pdf_bytes
 
 app = FastAPI(title="AI Validator Report Service")
 
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Or specify your frontend URL
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 class FieldItem(BaseModel):
     field_name: str
     status: str                        

@@ -1,5 +1,3 @@
-version: "3.8"
-
 services:
   api:
     build:
@@ -7,11 +5,8 @@ services:
       dockerfile: Dockerfile
     container_name: ai-validator-api
     ports:
-      - "3000:3000" 
-      - db
-      - mongo
-      - report
-      - document-api
+      - "3000:3000"
+      # Removed invalid port mappings: db, mongo, report, document-api
     environment:
       # DBs
       DATABASE_URL: postgres://user:pass@db:5432/ai_db
@@ -31,29 +26,10 @@ services:
       - /app/node_modules
     restart: always
 
-  document-api:
-    build:
-      context: ./apps/document-api
-      dockerfile: Dockerfile
-    container_name: ai-validator-document-api
-    ports:
-      - "3001:3000" 
-    depends_on:
-      - mongo
-    environment:
-      MONGO_URL: mongodb://mongo:27017/pdfstore
-      GRIDFS_BUCKET: pdfs
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3002}
-    env_file:
-      - ./.env
-    volumes:
-      - ./apps/document-api:/app
-      - /app/node_modules
-    restart: always
 
   report:
     build:
-      context: ./services/report-python
+      context: ./apps/services/report-python
       dockerfile: Dockerfile
     container_name: ai-validator-report
     ports:
@@ -66,7 +42,7 @@ services:
       dockerfile: Dockerfile
     container_name: ai-validator-web
     ports:
-      - "3002:3000" 
+      - "3100:3000"
     environment:
      
       NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:3000}

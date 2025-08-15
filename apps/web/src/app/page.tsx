@@ -218,18 +218,83 @@ function ReportOutput({ result }: { result: CompareResult }) {
   // Custom font and size for report
   const reportFont = "font-[ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace] text-[1.5rem]";
 
-  function handleDownload() {
-    const blob = new Blob([JSON.stringify(result, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'comparison-report.json';
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 100);
+  async function handleDownload() {
+    try {
+      // Map result to ReportInput schema expected by backend
+      const reportPayload = {
+        api_name: "API vs Model Comparison",
+        validation_date: new Date().toISOString(),
+        total_fields_compared: (result?.matches?.length ?? 0) + (result?.unresolved?.length ?? 0) + (result?.apiOnly?.length ?? 0) + (result?.modelOnly?.length ?? 0),
+        matched_fields: result?.matches?.length ?? 0,
+        unmatched_fields: result?.unresolved?.length ?? 0,
+        extra_fields: result?.apiOnly?.length ?? 0,
+        missing_fields: result?.modelOnly?.length ?? 0,
+        accuracy_score: result?.matches && result?.matches.length + result?.unresolved?.length > 0
+          ? Math.round(((result?.matches.length ?? 0) / ((result?.matches.length ?? 0) + (result?.unresolved?.length ?? 0))) * 100)
+          : null,
+        summary_recommendation: "See details below.",
+        fields: [
+          ...(result?.matches?.map(m => ({
+            field_name: m.apiField,
+            status: "matched",
+            expected_type: "",
+            actual_type: "",
+            issue: "",
+            suggestion: m.reason || ""
+          })) ?? []),
+          ...(result?.unresolved?.map(u => ({
+            field_name: u.apiField,
+            status: "unmatched",
+            expected_type: "",
+            actual_type: "",
+            issue: u.reason || "",
+            suggestion: ""
+          })) ?? []),
+          ...(result?.apiOnly?.map(f => ({
+            field_name: f,
+            status: "extra",
+            expected_type: "",
+            actual_type: "",
+            issue: "API only field",
+            suggestion: "Check if needed in model"
+          })) ?? []),
+          ...(result?.modelOnly?.map(f => ({
+            field_name: f,
+            status: "missing",
+            expected_type: "",
+            actual_type: "",
+            issue: "Model only field",
+            suggestion: "Check if needed in API"
+          })) ?? []),
+        ]
+      };
+      console.log("Sending to backend:", reportPayload);
+      const res = await fetch("http://localhost:8000/render", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(reportPayload),
+      });
+      if (!res.ok) {
+        const errorText = await res.text();
+        console.error("Backend error:", errorText);
+        throw new Error("Failed to generate PDF");
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'comparison-report.pdf';
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 100);
+    } catch (err) {
+      alert("Failed to download PDF report. Check the console for backend error details.");
+    }
   }
 
   return (
