@@ -1,11 +1,23 @@
+# apps/services/report-python/Dockerfile
 FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends fonts-dejavu-core && rm -rf /var/lib/apt/lists/*
+# (Optional) system deps for fonts/PDF libs
+# RUN apt-get update && apt-get install -y build-essential ghostscript && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements.txt ./requirements.txt
+RUN python -m venv /opt/venv && . /opt/venv/bin/activate && \
+    pip install --upgrade pip && \
+    pip install -r requirements.txt
 
-COPY report_renderer.py app.py ./
+# Copy service code
+COPY . .
+
 EXPOSE 8000
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8000"]
+
+CMD ["/bin/sh", "-lc", ". /opt/venv/bin/activate && uvicorn app:app --host 0.0.0.0 --port 8000 --reload"]
