@@ -15,56 +15,47 @@ ${apiJson}
 2) Data model JSON schema:
 ${modelJson}
 
-Perform a field-by-field comparison between the API response fields and the model fields.
+TASK
+- Do a field-by-field comparison (consider semantic equivalents like "user_id" ≈ "id" if they represent the same concept).
+- Identify:
+  • Missing fields (present in the model but not the API)  
+  • Extra fields (present in the API but not the model)  
+  • Type mismatches (expected vs actual)  
+  • Other inconsistencies (e.g., enum/name/format)  
+- Provide concrete, actionable suggestions per field.
+- Compute counts and ensure they are self-consistent with the "fields" array.
 
-Consider not only exact name matches, but also semantic equivalence (e.g., user_id vs id if they refer to the same concept).
-
-For each field, identify issues such as:
-
-Missing fields (in the model but not in the API, or vice versa).
-
-Extra fields (present only in one side).
-
-Type mismatches (expected vs actual type).
-
-Other inconsistencies (e.g., enum mismatches, naming conventions).
-
-Provide clear suggestions for resolution.
-
-At the end, include a summary recommendation based on your findings.
-
-Return the results only in valid JSON, strictly following this schema:
+OUTPUT FORMAT (STRICT)
+Return ONLY a JSON object with these exact properties:
 {
-  "title": "API Validation Report Input",
-  "type": "object",
-  "properties": {
-    "api_name": { "type": "string" },
-    "validation_date": { "type": "string", "format": "date-time" },
-    "total_fields_compared": { "type": "integer", "minimum": 0 },
-    "matched_fields": { "type": "integer", "minimum": 0 },
-    "unmatched_fields": { "type": "integer", "minimum": 0 },
-    "extra_fields": { "type": "integer", "minimum": 0 },
-    "missing_fields": { "type": "integer", "minimum": 0 },
-    "accuracy_score": { "type": ["number", "string"] },
-    "fields": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "properties": {
-          "field_name": { "type": "string" },
-          "status": { "type": "string" },
-          "issue": { "type": "string" },
-          "expected_type": { "type": "string" },
-          "actual_type": { "type": ["string", "null"] },
-          "suggestion": { "type": "string" }
-        },
-        "required": ["field_name", "status"]
-      }
-    },
-    "summary_recommendation": { "type": "string" }
-  },
-  "additionalProperties": true
+  "api_name": string,
+  "validation_date": string (RFC3339/ISO-8601, e.g., "2025-08-15T14:30:00Z"),
+  "total_fields_compared": integer >= 0,
+  "matched_fields": integer >= 0,
+  "unmatched_fields": integer >= 0,
+  "extra_fields": integer >= 0,
+  "missing_fields": integer >= 0,
+  "accuracy_score": integer (0–100),
+  "fields": [
+    {
+      "field_name": string,
+      "status": string ∈ {"matched","unmatched","extra","missing"},
+      "issue": string,
+      "expected_type": string,
+      "actual_type": string OR null,
+      "suggestion": string
+    }
+  ],
+  "summary_recommendation": string
 }
+
+VALIDATION & CONSISTENCY RULES
+- "validation_date" MUST be RFC3339/ISO-8601 with a timezone.
+- "status" must be exactly one of: matched, unmatched, extra, missing.
+- Counts must align with the "fields" array.
+- Every field object MUST include at least "field_name" and "status".
+- Use "" (empty string) where a text field has no issue/suggestion; use null for unknown "actual_type".
+- Do NOT include markdown, explanations, or any text outside the JSON.
 
 `;
 

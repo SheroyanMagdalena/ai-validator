@@ -1,0 +1,16 @@
+{
+  "title": "API Validation Report Input",
+  "type": "object",
+  "properties": {
+    "api_name": "Sample API",
+    "validation_date": "2023-10-01T00:00:00Z",
+    "total_fields_compared": 3,
+    "matched_fields": 2,
+    "unmatched_fields": 1,
+    "extra_fields": 1,
+    "missing_fields": 1,
+    "accuracy_score": "66.67%",
+    "summary_recommendation": "The API and model have a moderate level of alignment with 66.67% accuracy. It is recommended to address the extra and missing fields to improve consistency between the API and the model."
+  },
+  "additionalProperties": true
+}

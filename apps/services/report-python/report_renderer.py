@@ -45,11 +45,11 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
     width = A4[0] - 2*inch
     summary_rows = [
         ["Metric", "Value"],
-        ["Total Fields Compared", str(total)],
-        ["Matched Fields", str(matched)],
-        ["Unmatched Fields", str(unmatched)],
-        ["Extra Fields (API-only)", str(extra)],
-        ["Missing Fields (Model-only)", str(missing)],
+        ["Total Fields Compared", int(total)],
+        ["Matched Fields", int(matched)],
+        ["Unmatched Fields", int(unmatched)],
+        ["Extra Fields (API-only)", int(extra)],
+        ["Missing Fields (Model-only)", int(missing)],
         ["Accuracy Score", f"{accuracy}%"] if accuracy != "" else ["Accuracy Score", "—"],
     ]
     summary = Table(summary_rows, colWidths=[width*0.6, width*0.4])
