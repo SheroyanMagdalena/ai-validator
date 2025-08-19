@@ -45,14 +45,14 @@ services:
       dockerfile: Dockerfile
     container_name: ai-validator-api
     environment:
-      PORT: '3000'
+      PORT: '3100'
       WEB_ORIGIN: http://localhost:3000
       DATABASE_URL: postgres://user:pass@db:5432/ai_db
       MONGO_URL: mongodb://mongo:27017/pdfstore
       REPORT_SERVICE_URL: http://report:8000
     working_dir: /app
     ports:
-    - 3100:3000
+    - 3100:3100
     depends_on:
     - db
     - mongo
@@ -60,7 +60,7 @@ services:
     healthcheck:
       test:
       - CMD-SHELL
-      - sh -lc 'nc -z localhost 3000'
+      - sh -lc 'nc -z localhost 3100'
       interval: 10s
       timeout: 3s
       retries: 10
