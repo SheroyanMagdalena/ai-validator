@@ -7,8 +7,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# (Optional) system deps for fonts/PDF libs
-# RUN apt-get update && apt-get install -y build-essential ghostscript && rm -rf /var/lib/apt/lists/*
+
 
 COPY requirements.txt ./requirements.txt
 RUN python -m venv /opt/venv && . /opt/venv/bin/activate && \
