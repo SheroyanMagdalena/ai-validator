@@ -1,4 +1,3 @@
-
 "use client";
 import React, { useState } from "react";
 
@@ -269,7 +268,7 @@ function ReportOutput({ result }: { result: CompareResult }) {
         ]
       };
       console.log("Sending to backend:", reportPayload);
-      const res = await fetch("http://localhost:8000/render", {
+          const res = await fetch("http://localhost:3200/render", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
