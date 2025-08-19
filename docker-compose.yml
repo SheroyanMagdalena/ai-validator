@@ -60,7 +60,7 @@ services:
     healthcheck:
       test:
       - CMD-SHELL
-      - sh -lc 'nc -z localhost 3000'
+      - sh -lc 'nc -z localhost 3100'
       interval: 10s
       timeout: 3s
       retries: 10
