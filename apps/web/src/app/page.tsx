@@ -219,21 +219,43 @@ function ReportOutput({ result }: { result: CompareResult }) {
 
   async function handleDownload() {
     try {
-      // Map result to ReportInput schema expected by backend
+      // Debug: log the result object
+      console.log("Current result object:", result);
+
+      // If result.raw exists and looks like JSON, parse it
+      let parsedResult: any = result;
+      if (result && typeof result.raw === 'string') {
+        // Remove markdown code block if present
+        let rawStr = result.raw.trim();
+        if (rawStr.startsWith('```json')) {
+          rawStr = rawStr.replace(/^```json/, '').replace(/```$/, '').trim();
+        } else if (rawStr.startsWith('```')) {
+          rawStr = rawStr.replace(/^```/, '').replace(/```$/, '').trim();
+        }
+        try {
+          parsedResult = JSON.parse(rawStr);
+        } catch (e) {
+          console.error('Failed to parse result.raw as JSON:', e, rawStr);
+          alert('Failed to parse the report data.');
+          return;
+        }
+      }
+
+      // Map parsedResult to ReportInput schema expected by backend
       const reportPayload = {
-        api_name: "API vs Model Comparison",
-        validation_date: new Date().toISOString(),
-        total_fields_compared: (result?.matches?.length ?? 0) + (result?.unresolved?.length ?? 0) + (result?.apiOnly?.length ?? 0) + (result?.modelOnly?.length ?? 0),
-        matched_fields: result?.matches?.length ?? 0,
-        unmatched_fields: result?.unresolved?.length ?? 0,
-        extra_fields: result?.apiOnly?.length ?? 0,
-        missing_fields: result?.modelOnly?.length ?? 0,
-        accuracy_score: result?.matches && result?.matches.length + result?.unresolved?.length > 0
-          ? Math.round(((result?.matches.length ?? 0) / ((result?.matches.length ?? 0) + (result?.unresolved?.length ?? 0))) * 100)
-          : null,
-        summary_recommendation: "See details below.",
-        fields: [
-          ...(result?.matches?.map(m => ({
+        api_name: parsedResult.api_name || "API vs Model Comparison",
+        validation_date: parsedResult.validation_date || new Date().toISOString(),
+        total_fields_compared: parsedResult.total_fields_compared ?? ((parsedResult.matches?.length ?? 0) + (parsedResult.unresolved?.length ?? 0) + (parsedResult.apiOnly?.length ?? 0) + (parsedResult.modelOnly?.length ?? 0)),
+        matched_fields: parsedResult.matched_fields ?? parsedResult.matches?.length ?? 0,
+        unmatched_fields: parsedResult.unmatched_fields ?? parsedResult.unresolved?.length ?? 0,
+        extra_fields: parsedResult.extra_fields ?? parsedResult.apiOnly?.length ?? 0,
+        missing_fields: parsedResult.missing_fields ?? parsedResult.modelOnly?.length ?? 0,
+        accuracy_score: parsedResult.accuracy_score ?? (parsedResult.matches && parsedResult.matches.length + (parsedResult.unresolved?.length ?? 0) > 0
+          ? Math.round(((parsedResult.matches.length ?? 0) / ((parsedResult.matches.length ?? 0) + (parsedResult.unresolved?.length ?? 0))) * 100)
+          : null),
+        summary_recommendation: parsedResult.summary_recommendation || "See details below.",
+        fields: parsedResult.fields || [
+          ...(parsedResult.matches?.map((m: any) => ({
             field_name: m.apiField,
             status: "matched",
             expected_type: "",
@@ -241,7 +263,7 @@ function ReportOutput({ result }: { result: CompareResult }) {
             issue: "",
             suggestion: m.reason || ""
           })) ?? []),
-          ...(result?.unresolved?.map(u => ({
+          ...(parsedResult.unresolved?.map((u: any) => ({
             field_name: u.apiField,
             status: "unmatched",
             expected_type: "",
@@ -249,7 +271,7 @@ function ReportOutput({ result }: { result: CompareResult }) {
             issue: u.reason || "",
             suggestion: ""
           })) ?? []),
-          ...(result?.apiOnly?.map(f => ({
+          ...(parsedResult.apiOnly?.map((f: any) => ({
             field_name: f,
             status: "extra",
             expected_type: "",
@@ -257,7 +279,7 @@ function ReportOutput({ result }: { result: CompareResult }) {
             issue: "API only field",
             suggestion: "Check if needed in model"
           })) ?? []),
-          ...(result?.modelOnly?.map(f => ({
+          ...(parsedResult.modelOnly?.map((f: any) => ({
             field_name: f,
             status: "missing",
             expected_type: "",
@@ -267,8 +289,9 @@ function ReportOutput({ result }: { result: CompareResult }) {
           })) ?? []),
         ]
       };
+      // Debug: log the payload being sent
       console.log("Sending to backend:", reportPayload);
-          const res = await fetch("http://localhost:3200/render", {
+      const res = await fetch("http://localhost:3200/render", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
