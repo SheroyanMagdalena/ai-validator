@@ -8,25 +8,26 @@ export class ComparisonService {
 
   async compareWithAI(apiJson: string, modelJson: string) {
     const prompt = `
-You are an AI API vs Model Validation Report Generator.
-Your goal is to analyze an API specification against a data model and produce a structured validation report.
-1) API JSON response or spec:
+You are an expert API vs Data Model Validation Bot. Your job is to compare an API response/specification against a data model schema and generate a detailed, accurate, and thorough validation report.
+
+INPUTS:
+1. API JSON (response or spec):
 ${apiJson}
-2) Data model JSON schema:
+2. Data Model JSON Schema:
 ${modelJson}
 
-TASK
-- Do a field-by-field comparison (consider semantic equivalents like "user_id" ≈ "id" if they represent the same concept).
-- Identify:
-  • Missing fields (present in the model but not the API)  
-  • Extra fields (present in the API but not the model)  
-  • Type mismatches (expected vs actual)  
-  • Other inconsistencies (e.g., enum/name/format)  
-- Provide concrete, actionable suggestions per field.
-- Compute counts and ensure they are self-consistent with the "fields" array.
+TASKS:
+- For every field in both the API and the model, perform a deep comparison:
+  • Check for presence, type, format, and value/enum consistency.
+  • Consider semantic equivalence (e.g., "user_id" ≈ "id" if contextually justified).
+  • Identify and explain all mismatches, missing fields, extra fields, and type/format/value issues.
+  • For each field, provide a confidence score (0–1) and a short rationale for your decision.
+- Provide actionable suggestions for every issue found.
+- Ensure all counts and lists are consistent and correct.
 
-OUTPUT FORMAT (STRICT)
-Return ONLY a JSON object with these exact properties:
+OUTPUT FORMAT (STRICT):
+Return ONLY a valid JSON object with these exact properties (no markdown, no extra text):
+
 {
   "api_name": string,
   "validation_date": string (RFC3339/ISO-8601, e.g., "2025-08-15T14:30:00Z"),
@@ -39,24 +40,78 @@ Return ONLY a JSON object with these exact properties:
   "fields": [
     {
       "field_name": string,
-      "status": string ∈ {"matched","unmatched","extra","missing"},
-      "issue": string,
+      "status": "matched" | "unmatched" | "extra" | "missing",
       "expected_type": string,
-      "actual_type": string OR null,
-      "suggestion": string
+      "actual_type": string | null,
+      "expected_format": string | null,
+      "actual_format": string | null,
+      "issue": string,
+      "suggestion": string,
+      "confidence": number (0–1),
+      "rationale": string
     }
   ],
   "summary_recommendation": string
 }
 
-VALIDATION & CONSISTENCY RULES
+VALIDATION RULES:
 - "validation_date" MUST be RFC3339/ISO-8601 with a timezone.
 - "status" must be exactly one of: matched, unmatched, extra, missing.
-- Counts must align with the "fields" array.
-- Every field object MUST include at least "field_name" and "status".
-- Use "" (empty string) where a text field has no issue/suggestion; use null for unknown "actual_type".
-- Do NOT include markdown, explanations, or any text outside the JSON.
+- All counts must match the "fields" array.
+- Every field object MUST include all properties above.
+- Use "" (empty string) where a text field has no issue/suggestion/rationale; use null for unknown types/formats.
+- DO NOT include markdown, explanations, or any text outside the JSON.
 
+EXAMPLE OUTPUT:
+{
+  "api_name": "Example API",
+  "validation_date": "2025-08-21T12:00:00Z",
+  "total_fields_compared": 3,
+  "matched_fields": 2,
+  "unmatched_fields": 1,
+  "extra_fields": 0,
+  "missing_fields": 1,
+  "accuracy_score": 67,
+  "fields": [
+    {
+      "field_name": "user_id",
+      "status": "matched",
+      "expected_type": "string",
+      "actual_type": "string",
+      "expected_format": "uuid",
+      "actual_format": "uuid",
+      "issue": "",
+      "suggestion": "",
+      "confidence": 1.0,
+      "rationale": "Field names and types match exactly."
+    },
+    {
+      "field_name": "created_at",
+      "status": "unmatched",
+      "expected_type": "string",
+      "actual_type": "int",
+      "expected_format": "date-time",
+      "actual_format": null,
+      "issue": "Type mismatch",
+      "suggestion": "Change actual_type to string and format to date-time.",
+      "confidence": 0.9,
+      "rationale": "Field exists in both, but types and formats differ."
+    },
+    {
+      "field_name": "email",
+      "status": "missing",
+      "expected_type": "string",
+      "actual_type": null,
+      "expected_format": "email",
+      "actual_format": null,
+      "issue": "Field missing in API",
+      "suggestion": "Add 'email' field to API response.",
+      "confidence": 0.95,
+      "rationale": "Field present in model but not in API."
+    }
+  ],
+  "summary_recommendation": "Align types and formats for all fields. Add missing fields to API."
+}
 `;
 
     const completion = await this.openai.chat.completions.create({
