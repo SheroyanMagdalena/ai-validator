@@ -66,30 +66,41 @@ services:
       retries: 10
     env_file:
     - .env
+
   web:
     build:
       context: ./apps/web
       dockerfile: Dockerfile
     container_name: ai-validator-web
     environment:
-      PORT: '3000'
+      PORT: "3000"
       NEXT_PUBLIC_API_BASE_URL: http://localhost:3100
       NEXT_PUBLIC_REPORT_BASE_URL: http://localhost:3200
     working_dir: /app
     ports:
-    - 3000:3000
+      - "3000:3000"
     depends_on:
-    - api
-    - report
+      - api
+      - report
     healthcheck:
-      test:
-      - CMD-SHELL
-      - sh -lc 'nc -z localhost 3000'
+      test: ["CMD-SHELL", "sh -lc 'nc -z localhost 3000'"]
       interval: 10s
       timeout: 3s
       retries: 10
     env_file:
-    - .env
+      - .env
+
+    develop:                 
+      watch:
+        - action: sync
+          path: ./apps/web
+          target: /app
+          ignore:
+            - node_modules/
+            - .next/
+        - action: rebuild
+          path: ./apps/web/package.json
+
 volumes:
   db-data: null
   mongo-data: null
