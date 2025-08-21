@@ -1,9 +1,8 @@
 "use client";
 import React, { useEffect, useRef, useState } from "react";
 
-// Types
-export type Match = { apiField: string; modelField: string; confidence?: number; reason?: string };
-export type CompareResult = {
+type Match = { apiField: string; modelField: string; confidence?: number; reason?: string };
+type CompareResult = {
   matches?: Match[];
   apiOnly?: string[];
   modelOnly?: string[];
@@ -19,7 +18,7 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
 
-  // Progress + timer (sticky header)
+  // NEW: progress + timer (sticky header now)
   const [progress, setProgress] = useState(0); // 0-100
   const [elapsedMs, setElapsedMs] = useState(0);
   const startRef = useRef<number | null>(null);
@@ -62,25 +61,6 @@ export default function HomePage() {
     };
   }, []);
 
-  // Normalizes different backend shapes into what the UI expects
-  function normalizeResult(input: any): CompareResult {
-    if (!input) return {};
-    const src = input?.data ?? input?.result ?? input;
-
-    let obj = src;
-    if (typeof src === "string") {
-      try { obj = JSON.parse(src); } catch { obj = { raw: src }; }
-    }
-
-    const matches = obj.matches ?? obj.matched ?? obj.matched_fields ?? [];
-    const apiOnly = obj.apiOnly ?? obj.api_only ?? obj.onlyInApi ?? obj.extra_fields ?? [];
-    const modelOnly = obj.modelOnly ?? obj.model_only ?? obj.onlyInModel ?? obj.missing_fields ?? [];
-    const unresolved = obj.unresolved ?? obj.unmatched ?? obj.unmatched_fields ?? [];
-    const raw = obj.raw;
-
-    return { matches, apiOnly, modelOnly, unresolved, raw } as CompareResult;
-  }
-
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -103,27 +83,14 @@ export default function HomePage() {
         body: form,
       });
 
-      const contentType = res.headers.get("content-type") || "";
-      let data: any = undefined;
-      if (contentType.includes("application/json")) {
-        data = await res.json();
-      } else {
-        const text = await res.text();
-        data = { raw: text };
-      }
-
       if (!res.ok) {
-        const msg = typeof data === "string" ? data : (data?.message || "Request failed");
-        throw new Error(msg);
+        const text = await res.text();
+        throw new Error(text || `Request failed (${res.status})`);
       }
 
-      const normalized = normalizeResult(data);
-      if (!normalized.matches?.length && !normalized.apiOnly?.length && !normalized.modelOnly?.length && !normalized.unresolved?.length) {
-        console.warn("Comparison returned no items. Full payload:", data);
-      }
-      setResult(normalized);
+      const data = await res.json();
+      setResult(data);
     } catch (err: any) {
-      console.error("Compare error:", err);
       setError(err.message || "Something went wrong");
     } finally {
       endTimers();
@@ -219,8 +186,8 @@ export default function HomePage() {
           <StatTile label="Total" value={totalCompared} />
           <StatTile label="Matches" value={matches.length} accent="green" />
           <StatTile label="Unresolved" value={unresolved.length} accent="yellow" />
-          <StatTile label="API Only" value={apiOnly.length} accent="blue" />
-          <StatTile label="Model Only" value={modelOnly.length} accent="purple" />
+          <StatTile label="API↗︎ Only" value={apiOnly.length} accent="blue" />
+          <StatTile label="Model↘︎ Only" value={modelOnly.length} accent="purple" />
         </section>
       )}
 
@@ -291,6 +258,7 @@ function ReportOutput({ result }: { result: CompareResult }) {
   const apiOnly = result?.apiOnly ?? [];
   const modelOnly = result?.modelOnly ?? [];
   const unresolved = result?.unresolved ?? [];
+  const reportFont = "font-[ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace] text-[1.5rem]";
 
   async function handleDownload() {
     try {
@@ -400,15 +368,15 @@ function ReportOutput({ result }: { result: CompareResult }) {
         </button>
       </div>
       <section className="space-y-10">
-        {result?.raw && (
-          <div className="p-4 bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded shadow-sm font-mono text-base">
+        {result.raw && (
+          <div className={`p-4 bg-yellow-50 dark:bg-yellow-900 border border-yellow-200 dark:border-yellow-700 rounded shadow-sm font-mono text-base` }>
             <strong className="text-lg">Note:</strong> Model returned non-JSON. Showing raw output:
             <pre className="mt-2 whitespace-pre-wrap">{result.raw}</pre>
           </div>
         )}
 
         {matches.length > 0 && (
-          <div className="p-4 border rounded bg-white dark:bg-gray-900 shadow-sm">
+          <div className={`p-4 border rounded bg-white dark:bg-gray-900 shadow-sm` }>
             <h2 className="text-2xl font-semibold mb-4">Matches ({matches.length})</h2>
             <div className="space-y-3">
               {matches.map((m, idx) => (
@@ -438,7 +406,7 @@ function ReportOutput({ result }: { result: CompareResult }) {
         )}
 
         {unresolved.length > 0 && (
-          <div className="p-4 border rounded bg-white dark:bg-gray-900 shadow-sm">
+          <div className={`p-4 border rounded bg-white dark:bg-gray-900 shadow-sm`}>
             <h2 className="text-2xl font-semibold mb-4">Unresolved ({unresolved.length})</h2>
             <div className="space-y-3">
               {unresolved.map((u, i) => (
@@ -486,22 +454,23 @@ function DropZone({
   pasteHint?: string;
 }) {
   const [dragOver, setDragOver] = useState(false);
-  const [errMsg, setErrMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const zoneRef = useRef<HTMLDivElement | null>(null);
 
   function matchesAccept(file: File) {
     const name = file.name.toLowerCase();
     const type = file.type;
-    return accept.some((a) => (a.startsWith('.') ? name.endsWith(a) : type === a));
+    return accept.some((a) => a.startsWith('.') ? name.endsWith(a) : type === a);
   }
 
   function handleFiles(files: FileList | null) {
     if (!files || files.length === 0) return;
     const file = files[0];
     if (!matchesAccept(file)) {
-      setErrMsg(`Unsupported file type: ${file.type || file.name}`);
+      setError(`Unsupported file type: ${file.type || file.name}`);
       return;
     }
-    setErrMsg(null);
+    setError(null);
     onFile(file);
   }
 
@@ -519,10 +488,10 @@ function DropZone({
         const parsed = JSON.parse(text);
         const blob = new Blob([JSON.stringify(parsed, null, 2)], { type: 'application/json' });
         const file = new File([blob], `pasted-${Date.now()}.json`, { type: 'application/json' });
-        setErrMsg(null);
+        setError(null);
         onFile(file);
-      } catch {
-        setErrMsg('Pasted text is not valid JSON');
+      } catch (err) {
+        setError('Pasted text is not valid JSON');
       }
     }
   }
@@ -538,6 +507,7 @@ function DropZone({
   return (
     <div className="space-y-2">
       <div
+        ref={zoneRef}
         onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
         onDragLeave={() => setDragOver(false)}
         onDrop={handleDrop}
@@ -561,7 +531,7 @@ function DropZone({
           </span>
         )}
       </div>
-      {errMsg && <div className="text-red-600 text-sm">{errMsg}</div>}
+      {error && <div className="text-red-600 text-sm">{error}</div>}
     </div>
   );
 }
