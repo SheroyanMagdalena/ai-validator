@@ -69,8 +69,7 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
     unmatched_list = [f for f in (data.get("fields") or []) if f.get("status") == "unmatched"]
     if unmatched_list:
         table_rows = [[
-            "Field Name", "Issue", "Expected Type", "Actual Type",
-            "Expected Format", "Actual Format", "Suggestion", "Confidence", "Rationale"
+            "Field Name", "Issue", "Expected Type", "Actual Type", "Expected Format", "Actual Format", "Suggestion", "Confidence", "Rationale"
         ]]
         for f in unmatched_list:
             table_rows.append([
@@ -84,36 +83,24 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
                 Paragraph(str(f.get("confidence", "")), styles["Normal"]),
                 Paragraph(str(f.get("rationale", "")), styles["Normal"]),
             ])
-        # Adjust column widths (give more to Suggestion & Rationale)
-        table = Table(
-            table_rows,
-            colWidths=[
-                width*0.08,  # Field Name
-                width*0.08,  # Issue
-                width*0.08,  # Expected Type
-                width*0.08,  # Actual Type
-                width*0.08,  # Expected Format
-                width*0.08,  # Actual Format
-                width*0.20,  # Suggestion
-                width*0.06,  # Confidence
-                width*0.26   # Rationale
-            ],
-            repeatRows=1
-        )
+        # Wider columns for Suggestion and Rationale, narrower for short fields
+        table = Table(table_rows, colWidths=[width*0.08, width*0.08, width*0.09, width*0.09, width*0.09, width*0.09, width*0.22, width*0.06, width*0.20], repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
             ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("FONTSIZE", (0,0), (-1,0), 9),
+            ("FONTSIZE", (0,0), (-1,0), 10),  # Header font size
+            ("ROWHEIGHT", (0,0), (-1,0), 26), # Header row height
             ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
             ("VALIGN", (0,0), (-1,-1), "TOP"),
-            ("FONTSIZE", (1,0), (-1,-1), 8),
+            ("FONTSIZE", (1,0), (-1,-1), 8),  # Body font size
             ("WORDWRAP", (0,0), (-1,-1), True),
-            ("LEFTPADDING", (0,0), (-1,-1), 3),
-            ("RIGHTPADDING", (0,0), (-1,-1), 3),
-            ("TOPPADDING", (0,0), (-1,-1), 2),
-            ("BOTTOMPADDING", (0,0), (-1,-1), 2),
+            ("LEFTPADDING", (0,0), (-1,-1), 5),
+            ("RIGHTPADDING", (0,0), (-1,-1), 5),
+            ("TOPPADDING", (0,0), (-1,-1), 3),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+            ("ROWHEIGHT", (1,0), (-1,-1), 22), # Body row height
         ]))
-        # Zebra striping
+        # Add alternating row background colors for readability
         for i in range(1, len(table_rows)):
             if i % 2 == 1:
                 table.setStyle(TableStyle([
