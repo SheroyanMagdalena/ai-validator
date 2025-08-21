@@ -12,29 +12,11 @@ from reportlab.graphics.charts.textlabels import Label
 from reportlab.lib.units import inch
 
 def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report") -> bytes:
-    buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        topMargin=0.5*inch, bottomMargin=0.5*inch,
-        leftMargin=0.5*inch, rightMargin=0.5*inch
-    )
     styles = getSampleStyleSheet()
     elements: List = []
+    width = A4[0] - 2*inch  # Ensure width is defined for all tables
 
-    # Title & date
-    api_name = data.get("api_name") or title_fallback
-    elements.append(Paragraph(f"{title_fallback}: {api_name}", styles["Title"]))
-    dt = data.get("validation_date")
-    if dt:
-        try:
-            date_disp = datetime.fromisoformat(dt.replace("Z","+00:00")).strftime("%Y-%m-%d %H:%M UTC")
-            elements.append(Spacer(1, 10))
-            elements.append(Paragraph(f"Validation Date: {date_disp}", styles["Normal"]))
-        except Exception:
-            pass
-    elements.append(Spacer(1, 18))
-
-    # Summary table
+    # Summary variables
     total = int(data.get("total_fields_compared", 0))
     matched = int(data.get("matched_fields", 0))
     unmatched = int(data.get("unmatched_fields", 0))
@@ -42,7 +24,7 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
     missing = int(data.get("missing_fields", 0))
     accuracy = data.get("accuracy_score", "")
 
-    width = A4[0] - 2*inch
+    # Summary table
     summary_rows = [
         ["Metric", "Value"],
         ["Total Fields Compared", int(total)],
@@ -60,6 +42,146 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
         ("ALIGN", (0,0), (-1,-1), "LEFT"),
     ]))
     elements += [Paragraph("Validation Summary", styles["Heading2"]), Spacer(1,6), summary, Spacer(1, 16)]
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        topMargin=0.5*inch, bottomMargin=0.5*inch,
+        leftMargin=0.5*inch, rightMargin=0.5*inch
+    )
+    # styles and elements already defined above
+
+    # Title & date
+    width = A4[0] - 2*inch  # Ensure width is defined for all tables
+    api_name = data.get("api_name") or title_fallback
+    elements.append(Paragraph(f"{title_fallback}: {api_name}", styles["Title"]))
+    dt = data.get("validation_date")
+    if dt:
+        try:
+            date_disp = datetime.fromisoformat(dt.replace("Z","+00:00")).strftime("%Y-%m-%d %H:%M UTC")
+        except Exception:
+            date_disp = dt
+        elements.append(Spacer(1, 10))
+        elements.append(Paragraph(f"Validation Date: {date_disp}", styles["Normal"]))
+    elements.append(Spacer(1, 18))
+
+
+    # Unmatched table (now includes more details)
+    unmatched_list = [f for f in (data.get("fields") or []) if f.get("status") == "unmatched"]
+    if unmatched_list:
+        table_rows = [[
+            "Field Name", "Issue", "Expected Type", "Actual Type", "Expected Format", "Actual Format", "Suggestion", "Confidence", "Rationale"
+        ]]
+        for f in unmatched_list:
+            table_rows.append([
+                Paragraph(str(f.get("field_name", "")), styles["Normal"]),
+                Paragraph(str(f.get("issue", "")), styles["Normal"]),
+                Paragraph(str(f.get("expected_type", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_type", "") or "N/A"), styles["Normal"]),
+                Paragraph(str(f.get("expected_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("suggestion", "")), styles["Normal"]),
+                Paragraph(str(f.get("confidence", "")), styles["Normal"]),
+                Paragraph(str(f.get("rationale", "")), styles["Normal"]),
+            ])
+        # Wider columns for Suggestion and Rationale, narrower for short fields
+        table = Table(table_rows, colWidths=[width*0.08, width*0.08, width*0.09, width*0.09, width*0.09, width*0.09, width*0.22, width*0.06, width*0.20], repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE", (0,0), (-1,0), 10),  # Header font size
+            ("ROWHEIGHT", (0,0), (-1,0), 26), # Header row height
+            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("FONTSIZE", (1,0), (-1,-1), 8),  # Body font size
+            ("WORDWRAP", (0,0), (-1,-1), True),
+            ("LEFTPADDING", (0,0), (-1,-1), 5),
+            ("RIGHTPADDING", (0,0), (-1,-1), 5),
+            ("TOPPADDING", (0,0), (-1,-1), 3),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+            ("ROWHEIGHT", (1,0), (-1,-1), 22), # Body row height
+        ]))
+        # Add alternating row background colors for readability
+        for i in range(1, len(table_rows)):
+            if i % 2 == 1:
+                table.setStyle(TableStyle([
+                    ("BACKGROUND", (0,i), (-1,i), colors.whitesmoke)
+                ]))
+        elements += [Paragraph("Unmatched Fields", styles["Heading2"]), Spacer(1,6), table, Spacer(1, 16)]
+
+    # Missing table
+    missing_list = [f for f in (data.get("fields") or []) if f.get("status") == "missing"]
+    if missing_list:
+        table_rows = [[
+            "Field Name", "Expected Type", "Expected Format", "Issue", "Suggestion", "Confidence", "Rationale"
+        ]]
+        for f in missing_list:
+            table_rows.append([
+                Paragraph(str(f.get("field_name", "")), styles["Normal"]),
+                Paragraph(str(f.get("expected_type", "")), styles["Normal"]),
+                Paragraph(str(f.get("expected_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("issue", "")), styles["Normal"]),
+                Paragraph(str(f.get("suggestion", "")), styles["Normal"]),
+                Paragraph(str(f.get("confidence", "")), styles["Normal"]),
+                Paragraph(str(f.get("rationale", "")), styles["Normal"]),
+            ])
+        table = Table(table_rows, colWidths=[width*0.12, width*0.10, width*0.10, width*0.10, width*0.28, width*0.06, width*0.24], repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("FONTSIZE", (0,0), (-1,-1), 7),
+            ("WORDWRAP", (0,0), (-1,-1), True),
+            ("LEFTPADDING", (0,0), (-1,-1), 4),
+            ("RIGHTPADDING", (0,0), (-1,-1), 4),
+            ("TOPPADDING", (0,0), (-1,-1), 2),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 2),
+            ("ROWHEIGHT", (0,0), (-1,-1), 18),
+        ]))
+        for i in range(1, len(table_rows)):
+            if i % 2 == 1:
+                table.setStyle(TableStyle([
+                    ("BACKGROUND", (0,i), (-1,i), colors.whitesmoke)
+                ]))
+        elements += [Paragraph("Missing Fields", styles["Heading2"]), Spacer(1,6), table, Spacer(1, 16)]
+
+    # Extra table
+    extra_list = [f for f in (data.get("fields") or []) if f.get("status") == "extra"]
+    if extra_list:
+        table_rows = [[
+            "Field Name", "Actual Type", "Actual Format", "Issue", "Suggestion", "Confidence", "Rationale"
+        ]]
+        for f in extra_list:
+            table_rows.append([
+                Paragraph(str(f.get("field_name", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_type", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("issue", "")), styles["Normal"]),
+                Paragraph(str(f.get("suggestion", "")), styles["Normal"]),
+                Paragraph(str(f.get("confidence", "")), styles["Normal"]),
+                Paragraph(str(f.get("rationale", "")), styles["Normal"]),
+            ])
+        table = Table(table_rows, colWidths=[width*0.12, width*0.10, width*0.10, width*0.10, width*0.28, width*0.06, width*0.24], repeatRows=1)
+        table.setStyle(TableStyle([
+            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
+            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
+            ("VALIGN", (0,0), (-1,-1), "TOP"),
+            ("FONTSIZE", (0,0), (-1,-1), 7),
+            ("WORDWRAP", (0,0), (-1,-1), True),
+            ("LEFTPADDING", (0,0), (-1,-1), 4),
+            ("RIGHTPADDING", (0,0), (-1,-1), 4),
+            ("TOPPADDING", (0,0), (-1,-1), 2),
+            ("BOTTOMPADDING", (0,0), (-1,-1), 2),
+            ("ROWHEIGHT", (0,0), (-1,-1), 18),
+        ]))
+        for i in range(1, len(table_rows)):
+            if i % 2 == 1:
+                table.setStyle(TableStyle([
+                    ("BACKGROUND", (0,i), (-1,i), colors.whitesmoke)
+                ]))
+        elements += [Paragraph("Extra Fields", styles["Heading2"]), Spacer(1,6), table, Spacer(1, 16)]
+
 
     # Bar chart
     drawing = Drawing(width, 200)
@@ -77,26 +199,7 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
     drawing.add(chart); drawing.add(label)
     elements += [drawing, Spacer(1, 16)]
 
-    # Unmatched table
-    unmatched_list = [f for f in (data.get("fields") or []) if f.get("status") == "unmatched"]
-    if unmatched_list:
-        table_rows = [["Field Name", "Issue", "Expected Type", "Actual Type", "Suggestion"]]
-        for f in unmatched_list:
-            table_rows.append([
-                f.get("field_name",""),
-                f.get("issue",""),
-                f.get("expected_type",""),
-                f.get("actual_type","") or "N/A",
-                f.get("suggestion",""),
-            ])
-        table = Table(table_rows, colWidths=[width*0.22, width*0.28, width*0.16, width*0.16, width*0.18], repeatRows=1)
-        table.setStyle(TableStyle([
-            ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
-            ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
-            ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
-            ("VALIGN", (0,0), (-1,-1), "TOP"),
-        ]))
-        elements += [Paragraph("Unmatched Fields", styles["Heading2"]), Spacer(1,6), table, Spacer(1, 16)]
+
 
     # Recommendation
     elements += [

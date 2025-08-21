@@ -16,23 +16,31 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# Updated FieldItem for new report structure
 class FieldItem(BaseModel):
     field_name: str
-    status: str                        
-    expected_type: Optional[str] = ""
-    actual_type: Optional[str] = ""
+    status: str  # matched, unmatched, extra, missing
+    expected_type: Optional[str] = None
+    actual_type: Optional[str] = None
+    expected_format: Optional[str] = None
+    actual_format: Optional[str] = None
     issue: Optional[str] = ""
     suggestion: Optional[str] = ""
+    confidence: Optional[float] = None
+    rationale: Optional[str] = ""
 
+
+# Updated ReportInput for new report structure
 class ReportInput(BaseModel):
     api_name: str = "Unnamed API"
-    validation_date: Optional[str] = None 
+    validation_date: Optional[str] = None
     total_fields_compared: int = 0
     matched_fields: int = 0
     unmatched_fields: int = 0
-    extra_fields: int = 0                  
-    missing_fields: int = 0                
-    accuracy_score: Optional[int] = None   
+    extra_fields: int = 0
+    missing_fields: int = 0
+    accuracy_score: Optional[int] = None
     summary_recommendation: Optional[str] = ""
     fields: List[FieldItem] = Field(default_factory=list)
 
