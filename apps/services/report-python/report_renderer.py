@@ -69,35 +69,51 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
     unmatched_list = [f for f in (data.get("fields") or []) if f.get("status") == "unmatched"]
     if unmatched_list:
         table_rows = [[
-            "Field Name", "Issue", "Expected Type", "Actual Type", "Expected Format", "Actual Format", "Suggestion", "Confidence", "Rationale"
+            "Field Name", "Issue", "Expected Type", "Actual Type",
+            "Expected Format", "Actual Format", "Suggestion", "Confidence", "Rationale"
         ]]
         for f in unmatched_list:
             table_rows.append([
-                f.get("field_name", ""),
-                f.get("issue", ""),
-                f.get("expected_type", ""),
-                f.get("actual_type", "") or "N/A",
-                f.get("expected_format", ""),
-                f.get("actual_format", ""),
-                f.get("suggestion", ""),
-                f.get("confidence", ""),
-                f.get("rationale", ""),
+                Paragraph(str(f.get("field_name", "")), styles["Normal"]),
+                Paragraph(str(f.get("issue", "")), styles["Normal"]),
+                Paragraph(str(f.get("expected_type", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_type", "") or "N/A"), styles["Normal"]),
+                Paragraph(str(f.get("expected_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("suggestion", "")), styles["Normal"]),
+                Paragraph(str(f.get("confidence", "")), styles["Normal"]),
+                Paragraph(str(f.get("rationale", "")), styles["Normal"]),
             ])
-        table = Table(table_rows, colWidths=[width*0.10, width*0.10, width*0.10, width*0.10, width*0.10, width*0.10, width*0.18, width*0.06, width*0.16], repeatRows=1)
+        # Adjust column widths (give more to Suggestion & Rationale)
+        table = Table(
+            table_rows,
+            colWidths=[
+                width*0.08,  # Field Name
+                width*0.08,  # Issue
+                width*0.08,  # Expected Type
+                width*0.08,  # Actual Type
+                width*0.08,  # Expected Format
+                width*0.08,  # Actual Format
+                width*0.20,  # Suggestion
+                width*0.06,  # Confidence
+                width*0.26   # Rationale
+            ],
+            repeatRows=1
+        )
         table.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
             ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+            ("FONTSIZE", (0,0), (-1,0), 9),
             ("GRID", (0,0), (-1,-1), 0.5, colors.grey),
             ("VALIGN", (0,0), (-1,-1), "TOP"),
-            ("FONTSIZE", (0,0), (-1,-1), 7),
+            ("FONTSIZE", (1,0), (-1,-1), 8),
             ("WORDWRAP", (0,0), (-1,-1), True),
-            ("LEFTPADDING", (0,0), (-1,-1), 4),
-            ("RIGHTPADDING", (0,0), (-1,-1), 4),
+            ("LEFTPADDING", (0,0), (-1,-1), 3),
+            ("RIGHTPADDING", (0,0), (-1,-1), 3),
             ("TOPPADDING", (0,0), (-1,-1), 2),
             ("BOTTOMPADDING", (0,0), (-1,-1), 2),
-            ("ROWHEIGHT", (0,0), (-1,-1), 18),
         ]))
-        # Add alternating row background colors for readability
+        # Zebra striping
         for i in range(1, len(table_rows)):
             if i % 2 == 1:
                 table.setStyle(TableStyle([
@@ -113,15 +129,15 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
         ]]
         for f in missing_list:
             table_rows.append([
-                f.get("field_name", ""),
-                f.get("expected_type", ""),
-                f.get("expected_format", ""),
-                f.get("issue", ""),
-                f.get("suggestion", ""),
-                f.get("confidence", ""),
-                f.get("rationale", ""),
+                Paragraph(str(f.get("field_name", "")), styles["Normal"]),
+                Paragraph(str(f.get("expected_type", "")), styles["Normal"]),
+                Paragraph(str(f.get("expected_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("issue", "")), styles["Normal"]),
+                Paragraph(str(f.get("suggestion", "")), styles["Normal"]),
+                Paragraph(str(f.get("confidence", "")), styles["Normal"]),
+                Paragraph(str(f.get("rationale", "")), styles["Normal"]),
             ])
-        table = Table(table_rows, colWidths=[width*0.14, width*0.12, width*0.12, width*0.12, width*0.18, width*0.06, width*0.16], repeatRows=1)
+        table = Table(table_rows, colWidths=[width*0.12, width*0.10, width*0.10, width*0.10, width*0.28, width*0.06, width*0.24], repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
             ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
@@ -150,15 +166,15 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
         ]]
         for f in extra_list:
             table_rows.append([
-                f.get("field_name", ""),
-                f.get("actual_type", ""),
-                f.get("actual_format", ""),
-                f.get("issue", ""),
-                f.get("suggestion", ""),
-                f.get("confidence", ""),
-                f.get("rationale", ""),
+                Paragraph(str(f.get("field_name", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_type", "")), styles["Normal"]),
+                Paragraph(str(f.get("actual_format", "")), styles["Normal"]),
+                Paragraph(str(f.get("issue", "")), styles["Normal"]),
+                Paragraph(str(f.get("suggestion", "")), styles["Normal"]),
+                Paragraph(str(f.get("confidence", "")), styles["Normal"]),
+                Paragraph(str(f.get("rationale", "")), styles["Normal"]),
             ])
-        table = Table(table_rows, colWidths=[width*0.14, width*0.12, width*0.12, width*0.12, width*0.18, width*0.06, width*0.16], repeatRows=1)
+        table = Table(table_rows, colWidths=[width*0.12, width*0.10, width*0.10, width*0.10, width*0.28, width*0.06, width*0.24], repeatRows=1)
         table.setStyle(TableStyle([
             ("BACKGROUND", (0,0), (-1,0), colors.lightgrey),
             ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
