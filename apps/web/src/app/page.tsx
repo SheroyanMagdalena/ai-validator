@@ -46,11 +46,10 @@ export default function HomePage() {
       setElapsedMs(Date.now() - startRef.current);
     }, 100);
 
-    // Simulated determinate progress up to 90%, completes to 100% on finish
+    
     progressRef.current = window.setInterval(() => {
       setProgress((p) => {
         const next = p < 90 ? p + 1 : 90;
-        // map progress to stage
         if (next >= 60 && stage !== "matching") setStage("matching");
         else if (next >= 10 && stage === "parsing") setStage("parsing");
         return next;
