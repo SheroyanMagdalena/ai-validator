@@ -614,14 +614,35 @@ function ReportOutput({ result }: { result: CompareResult }) {
     }
   }
 
+  function handleDownloadJson() {
+    const jsonStr = JSON.stringify(result, null, 2);
+    const blob = new Blob([jsonStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'comparison-report.json';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 100);
+  }
+
   return (
     <>
-      <div className="flex justify-end mb-6">
+      <div className="flex justify-end mb-6 gap-3">
         <button
           className="px-5 py-2 rounded bg-gray-500 text-white font-medium hover:bg-gray-700 transition"
           onClick={handleDownload}
         >
           Download Report
+        </button>
+        <button
+          className="px-5 py-2 rounded bg-blue-500 text-white font-medium hover:bg-blue-700 transition"
+          onClick={handleDownloadJson}
+        >
+          Download JSON
         </button>
       </div>
       <section className="space-y-10">
