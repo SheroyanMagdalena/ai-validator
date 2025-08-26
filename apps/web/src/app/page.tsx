@@ -80,14 +80,14 @@ export default function HomePage() {
   }, [apiFile, modelFile, loading, progress]);
 
   async function handleSubmit(e: React.FormEvent) {
+
     e.preventDefault();
     setError(null);
-    setResult(null);
-
     if (!apiFile || !modelFile) {
       setError("Please select both files.");
       return;
     }
+    setResult(null); // Only clear result if actually starting a new comparison
 
     const form = new FormData();
     form.append("apiFile", apiFile);
