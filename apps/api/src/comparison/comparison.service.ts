@@ -121,9 +121,30 @@ EXAMPLE OUTPUT:
     });
 
     const raw = completion.choices[0].message?.content;
+    console.log('OpenAI raw response:', raw);
     try {
-      return JSON.parse(raw || '{}');
+      const parsed = JSON.parse(raw || '{}');
+      console.log('Returning parsed JSON to client:', parsed);
+      // Map fields to frontend arrays
+      if (parsed && Array.isArray(parsed.fields)) {
+        parsed.matches = parsed.fields.filter(f => f.status === 'matched').map(f => ({
+          apiField: f.field_name,
+          modelField: f.field_name, // You may want to adjust this if you have a mapping
+          confidence: f.confidence,
+          reason: f.rationale
+        }));
+        parsed.unresolved = parsed.fields.filter(f => f.status === 'unmatched').map(f => ({
+          apiField: f.field_name,
+          modelField: f.field_name, // You may want to adjust this if you have a mapping
+          confidence: f.confidence,
+          reason: f.rationale
+        }));
+        parsed.apiOnly = parsed.fields.filter(f => f.status === 'extra').map(f => f.field_name);
+        parsed.modelOnly = parsed.fields.filter(f => f.status === 'missing').map(f => f.field_name);
+      }
+      return parsed;
     } catch {
+      console.log('Returning raw to client:', raw);
       return { raw };
     }
   }
