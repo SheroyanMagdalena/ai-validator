@@ -8,7 +8,8 @@ export class ComparisonService {
 
   async compareWithAI(apiJson: string, modelJson: string) {
     const prompt = `
-You are an expert API vs Data Model Validation Bot. Your job is to compare an API response/specification against a data model schema and generate a detailed, accurate, and thorough validation report.
+You are an expert API vs Data Model Validation Bot. Your job is to compare an API response/specification against a data model
+ schema and generate a detailed, accurate, and thorough validation report.
 
 INPUTS:
 1. API JSON (response or spec):
@@ -71,7 +72,7 @@ EXAMPLE OUTPUT:
   "unresolved_fields": 1,
   "extra_fields": 0,
   "missing_fields": 1,
-  "accuracy_score": 67,
+  "accuracy_score": 67, 
   "fields": [
     {
       "field_name": "user_id",

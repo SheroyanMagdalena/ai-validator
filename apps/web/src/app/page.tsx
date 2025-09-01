@@ -8,6 +8,7 @@ type CompareResult = {
   modelOnly?: string[];
   unresolved?: Match[];
   raw?: string;
+  accuracy?: number;
 };
 
 type Stage = "idle" | "upload" | "parsing" | "matching" | "report";
@@ -122,10 +123,13 @@ export default function HomePage() {
   const apiOnly = result?.apiOnly ?? [];
   const modelOnly = result?.modelOnly ?? [];
   const unresolved = result?.unresolved ?? [];
-
+  const accuracyPct =
+    typeof result?.accuracy_score === "number"
+      ? result.accuracy_score
+      : (matches.length + unresolved.length > 0
+          ? Math.round((matches.length / (matches.length + unresolved.length)) * 100)
+          : null);
   const totalCompared = matches.length + unresolved.length + apiOnly.length + modelOnly.length;
-  const denom = matches.length + unresolved.length;
-  const accuracyPct = denom > 0 ? Math.round((matches.length / denom) * 100) : null;
 
   return (
     <main className="max-w-5xl mx-auto my-10 p-6">
@@ -240,12 +244,12 @@ export default function HomePage() {
               <div className="grid sm:grid-cols-2 gap-6 mb-8">
                 <div className="p-4 border rounded-xl bg-white dark:bg-gray-900">
                   <h3 className="text-lg font-semibold mb-3">Distribution</h3>
-                  <DonutChart
+                  <PieChart
                     segments={[
-                      { label: "Matches", value: matches.length, color: "#22c55e" },   // green-500
-                      { label: "Unresolved", value: unresolved.length, color: "#f59e0b" }, // amber-500
-                      { label: "API-only", value: apiOnly.length, color: "#3b82f6" },  // blue-500
-                      { label: "Model-only", value: modelOnly.length, color: "#8b5cf6" }, // violet-500
+                      { label: "Matches", value: matches.length, color: "#22c55e" },
+                      { label: "Unresolved", value: unresolved.length, color: "#f59e0b" },
+                      { label: "API-only", value: apiOnly.length, color: "#3b82f6" },
+                      { label: "Model-only", value: modelOnly.length, color: "#8b5cf6" },
                     ]}
                   />
                 </div>
@@ -399,61 +403,6 @@ function Tabs({
           )}
         </button>
       ))}
-    </div>
-  );
-}
-
-function DonutChart({
-  segments,
-}: {
-  segments: { label: string; value: number; color: string }[];
-}) {
-  const total = Math.max(segments.reduce((s, x) => s + x.value, 0), 1); // avoid 0
-  const R = 54; // radius
-  const C = 2 * Math.PI * R;
-  const stroke = 12;
-  let acc = 0;
-
-  return (
-    <div className="flex items-center gap-6">
-      <svg viewBox="0 0 140 140" width="140" height="140" className="shrink-0">
-        <g transform="rotate(-90 70 70)">
-          {/* track */}
-          <circle cx="70" cy="70" r={R} fill="none" stroke="#e5e7eb" strokeWidth={stroke} />
-          {segments.map((s, i) => {
-            const len = (s.value / total) * C;
-            const dasharray = `${len} ${C - len}`;
-            const offset = (acc / total) * C;
-            acc += s.value;
-            return (
-              <circle
-                key={i}
-                cx="70"
-                cy="70"
-                r={R}
-                fill="none"
-                stroke={s.color}
-                strokeWidth={stroke}
-                strokeDasharray={dasharray}
-                strokeDashoffset={offset}
-                strokeLinecap="butt"
-              />
-            );
-          })}
-        </g>
-      </svg>
-      <ul className="space-y-2">
-        {segments.map((s, i) => (
-          <li key={i} className="flex items-center gap-3 text-sm">
-            <span
-              className="inline-block w-3 h-3 rounded"
-              style={{ backgroundColor: s.color }}
-            />
-            <span className="min-w-[6rem]">{s.label}</span>
-            <span className="tabular-nums">{s.value}</span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
@@ -839,6 +788,61 @@ function DropZone({
         )}
       </div>
       {error && <div className="text-red-600 text-sm">{error}</div>}
+    </div>
+  );
+}
+
+function PieChart({
+  segments,
+}: {
+  segments: { label: string; value: number; color: string }[];
+}) {
+  const total = Math.max(segments.reduce((s, x) => s + x.value, 0), 1); // avoid 0
+  // Helper to describe an SVG arc for a pie slice
+  function describeArc(cx: number, cy: number, r: number, startAngle: number, endAngle: number) {
+    const start = {
+      x: cx + r * Math.cos((Math.PI / 180) * startAngle),
+      y: cy + r * Math.sin((Math.PI / 180) * startAngle),
+    };
+    const end = {
+      x: cx + r * Math.cos((Math.PI / 180) * endAngle),
+      y: cy + r * Math.sin((Math.PI / 180) * endAngle),
+    };
+    const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
+    return [
+      `M ${cx} ${cy}`,
+      `L ${start.x} ${start.y}`,
+      `A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`,
+      "Z",
+    ].join(" ");
+  }
+  const cx = 70, cy = 70, r = 54;
+  let currentAngle = 0;
+  return (
+    <div className="flex items-center gap-6">
+      <svg viewBox="0 0 140 140" width="140" height="140" className="shrink-0">
+        {segments.map((s, i) => {
+          const angle = (s.value / total) * 360;
+          const path = describeArc(cx, cy, r, currentAngle, currentAngle + angle);
+          const el = (
+            <path key={i} d={path} fill={s.color} stroke="#fff" strokeWidth={2} />
+          );
+          currentAngle += angle;
+          return el;
+        })}
+      </svg>
+      <ul className="space-y-2">
+        {segments.map((s, i) => (
+          <li key={i} className="flex items-center gap-3 text-sm">
+            <span
+              className="inline-block w-3 h-3 rounded"
+              style={{ backgroundColor: s.color }}
+            />
+            <span className="min-w-[6rem]">{s.label}</span>
+            <span className="tabular-nums">{s.value}</span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
