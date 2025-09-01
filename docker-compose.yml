@@ -1,22 +1,22 @@
 services:
-  db:
-    image: postgres:16-alpine
-    container_name: ai-validator-postgres
-    environment:
-      POSTGRES_DB: ai_db
-      POSTGRES_USER: user
-      POSTGRES_PASSWORD: pass
-    ports:
-    - 5432:5432
-    volumes:
-    - db-data:/var/lib/postgresql/data
-  mongo:
-    image: mongo:6
-    container_name: ai-validator-mongo
-    ports:
-    - 27017:27017
-    volumes:
-    - mongo-data:/data/db
+#   db:
+#     image: postgres:16-alpine
+#     container_name: ai-validator-postgres
+#     environment:
+#       POSTGRES_DB: ai_db
+#       POSTGRES_USER: user
+#       POSTGRES_PASSWORD: pass
+#     ports:
+#     - 5432:5432
+#     volumes:
+#     - db-data:/var/lib/postgresql/data
+#   mongo:
+#     image: mongo:6
+#     container_name: ai-validator-mongo
+#     ports:
+#     - 27017:27017
+#     volumes:
+#     - mongo-data:/data/db
   report:
     build:
       context: ./apps/services/report-python
@@ -47,16 +47,16 @@ services:
     environment:
       PORT: '3100'
       WEB_ORIGIN: http://localhost:3000
-      DATABASE_URL: postgres://user:pass@db:5432/ai_db
-      MONGO_URL: mongodb://mongo:27017/pdfstore
+      # DATABASE_URL: postgres://user:pass@db:5432/ai_db
+      # MONGO_URL: mongodb://mongo:27017/pdfstore
       REPORT_SERVICE_URL: http://report:3200
     working_dir: /app
     ports:
     - 3100:3100
     depends_on:
-    - db
-    - mongo
-    - report
+    # - db
+    # - mongo
+    - reporthttps://isaahq.slack.com/files/U08R2J26NUF/F09CYTLMV8E/comparison.service.ts?origin_team=T051AR1LXS9&origin_channel=D08R2J2CQ6T
     healthcheck:
       test:
       - CMD-SHELL
@@ -66,6 +66,18 @@ services:
       retries: 10
     env_file:
     - .env
+
+    develop:                   
+      watch:
+        - action: sync
+          path: ./apps/api
+          target: /app
+          ignore:
+            - node_modules/
+            - .next/
+        - action: rebuild
+          path: ./apps/api/package.json
+
   web:
     build:
       context: ./apps/web
@@ -89,7 +101,7 @@ services:
     env_file:
       - .env
 
-    develop:                   # ✅ correct location
+    develop:                   
       watch:
         - action: sync
           path: ./apps/web
@@ -100,6 +112,6 @@ services:
         - action: rebuild
           path: ./apps/web/package.json
 
-volumes:
-  db-data: null
-  mongo-data: null
+# volumes:
+#   db-data: null
+#   mongo-data: null
