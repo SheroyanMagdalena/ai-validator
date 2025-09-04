@@ -1,8 +1,22 @@
-import OpenAI from 'openai';
-import Ajv from 'ajv';
-import addFormats from 'ajv-formats';
+"use client";
 
-interface ValidationResult {
+import React, { useEffect, useRef, useState } from "react";
+
+// Types
+type FieldAnalysis = {
+  field_name: string;
+  status: 'matched' | 'unresolved' | 'extra' | 'missing';
+  expected_type: string;
+  actual_type: string;
+  expected_format: string | null;
+  actual_format: string | null;
+  issue: string;
+  suggestion: string;
+  confidence: number;
+  rationale: string;
+};
+
+type CompareResult = {
   api_name: string;
   validation_date: string;
   total_fields_compared: number;
@@ -11,551 +25,790 @@ interface ValidationResult {
   extra_fields: number;
   missing_fields: number;
   accuracy_score: number;
-  fields: FieldComparison[];
-  schema_errors: SchemaValidationError[];
-  structural_analysis: StructuralAnalysis;
-  ai_suggestions?: AISuggestion[];
-  summary_recommendation: string;
-}
+  fields: FieldAnalysis[];
+  summary_recommendation?: string;
+};
 
-interface FieldComparison {
-  field_name: string;
-  status: 'matched' | 'unresolved' | 'extra' | 'missing' | 'type_mismatch' | 'constraint_violation';
-  expected_type?: string;
-  actual_type?: string;
-  expected_format?: string;
-  actual_format?: string;
-  issue: string;
-  suggestion: string;
-  confidence: number;
-  api_value?: any;
-  schema_constraints?: any;
-}
+type Stage = "idle" | "upload" | "parsing" | "matching" | "report";
 
-interface SchemaValidationError {
-  field_path: string;
-  error_type: string;
-  message: string;
-  expected_value?: any;
-  actual_value?: any;
-}
+// Main component
+export default function HomePage() {
+  // File states
+  const [apiFile, setApiFile] = useState<File | null>(null);
+  const [modelFile, setModelFile] = useState<File | null>(null);
 
-interface StructuralAnalysis {
-  api_structure: ObjectStructure;
-  schema_structure: ObjectStructure;
-  structural_mismatches: string[];
-  nesting_comparison: {
-    api_depth: number;
-    schema_depth: number;
-    depth_match: boolean;
+  // Loading & result states
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<CompareResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  // Modal & tab states
+  const [showModal, setShowModal] = useState(false);
+  const [activeTab, setActiveTab] = useState<"overview" | "matched" | "unresolved" | "extra" | "missing">("overview");
+
+  // Progress & timer states
+  const [progress, setProgress] = useState(0);
+  const [elapsedMs, setElapsedMs] = useState(0);
+  const [stage, setStage] = useState<Stage>("idle");
+  const startRef = useRef<number | null>(null);
+  const timerRef = useRef<number | null>(null);
+  const progressRef = useRef<number | null>(null);
+
+  const apiBase = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3000";
+
+  // Helper: start timers and progress
+  const beginTimers = () => {
+    setProgress(0);
+    setElapsedMs(0);
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (progressRef.current) clearInterval(progressRef.current);
+    startRef.current = Date.now();
+    setStage("parsing");
+    timerRef.current = window.setInterval(() => {
+      if (startRef.current) {
+        setElapsedMs(Date.now() - startRef.current);
+      }
+    }, 100);
+    progressRef.current = window.setInterval(() => {
+      setProgress((p) => {
+        const next = p < 90 ? p + 1 : 90;
+        if (next >= 60 && stage !== "matching") setStage("matching");
+        else if (next >= 10 && stage === "parsing") setStage("parsing");
+        return next;
+      });
+    }, 100);
   };
-}
 
-interface ObjectStructure {
-  total_fields: number;
-  required_fields: string[];
-  optional_fields: string[];
-  nested_objects: string[];
-  array_fields: string[];
-  field_types: Record<string, string>;
-}
+  // Helper: end timers and set report stage
+  const endTimers = () => {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (progressRef.current) clearInterval(progressRef.current);
+    timerRef.current = null;
+    progressRef.current = null;
+    setProgress(100);
+    setStage("report");
+    if (startRef.current) setElapsedMs(Date.now() - startRef.current);
+  };
 
-interface AISuggestion {
-  type: 'field_mapping' | 'transformation' | 'structural' | 'general';
-  description: string;
-  confidence: number;
-  action_required?: string;
-}
-
-@Injectable()
-export class ProperComparisonService {
-  private openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-  private ajv: Ajv;
-
-  constructor() {
-    this.ajv = new Ajv({ 
-      allErrors: true, 
-      verbose: true,
-      strict: false 
-    });
-    addFormats(this.ajv);
-  }
-
-  async compareWithValidation(apiJsonString: string, schemaJsonString: string): Promise<ValidationResult> {
-    console.log('🚀 Starting programmatic comparison...');
-    
-    // Step 1: Parse and validate JSON inputs
-    const { apiData, schemaData } = this.parseInputs(apiJsonString, schemaJsonString);
-    
-    // Step 2: Perform actual JSON Schema validation
-    const schemaValidation = this.performSchemaValidation(apiData, schemaData);
-    
-    // Step 3: Deep structural analysis
-    const structuralAnalysis = this.analyzeStructure(apiData, schemaData);
-    
-    // Step 4: Field-by-field programmatic comparison
-    const fieldComparisons = this.compareFields(apiData, schemaData, schemaValidation.errors);
-    
-    // Step 5: Calculate metrics
-    const metrics = this.calculateMetrics(fieldComparisons);
-    
-    // Step 6: Use AI only for intelligent suggestions (optional)
-    const aiSuggestions = await this.getAIEnhancements(fieldComparisons, schemaValidation.errors);
-    
-    // Step 7: Compile final result
-    return {
-      api_name: this.extractApiName(schemaData) || 'API Comparison',
-      validation_date: new Date().toISOString(),
-      ...metrics,
-      fields: fieldComparisons,
-      schema_errors: schemaValidation.errors,
-      structural_analysis: structuralAnalysis,
-      ai_suggestions: aiSuggestions,
-      summary_recommendation: this.generateSummary(metrics, schemaValidation, structuralAnalysis)
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current);
+      if (progressRef.current) clearInterval(progressRef.current);
     };
-  }
+  }, []);
 
-  private parseInputs(apiJsonString: string, schemaJsonString: string) {
-    let apiData: any;
-    let schemaData: any;
+  // When both files are selected, set stage to "upload"
+  useEffect(() => {
+    if (!loading && apiFile && modelFile && progress === 0) {
+      setStage("upload");
+    }
+  }, [apiFile, modelFile, loading, progress]);
+
+  // Handle form submit to upload files for comparison
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    if (!apiFile || !modelFile) {
+      setError("Please select both files.");
+      return;
+    }
+    setResult(null);
+    const formData = new FormData();
+    formData.append("apiFile", apiFile);
+    formData.append("modelFile", modelFile);
+    setLoading(true);
+    beginTimers();
 
     try {
-      apiData = JSON.parse(apiJsonString);
-    } catch (error) {
-      throw new Error(`Invalid API JSON: ${error.message}`);
-    }
-
-    try {
-      schemaData = JSON.parse(schemaJsonString);
-    } catch (error) {
-      throw new Error(`Invalid Schema JSON: ${error.message}`);
-    }
-
-    // Validate that schema looks like a JSON Schema
-    if (!schemaData.type && !schemaData.properties && !schemaData.$schema) {
-      console.warn('⚠️ Schema may not be a valid JSON Schema format');
-    }
-
-    return { apiData, schemaData };
-  }
-
-  private performSchemaValidation(apiData: any, schemaData: any) {
-    console.log('🔍 Performing JSON Schema validation...');
-    
-    const validate = this.ajv.compile(schemaData);
-    const isValid = validate(apiData);
-    
-    const errors: SchemaValidationError[] = [];
-    
-    if (!isValid && validate.errors) {
-      for (const error of validate.errors) {
-        errors.push({
-          field_path: error.instancePath || error.schemaPath || 'root',
-          error_type: error.keyword || 'unknown',
-          message: error.message || 'Validation failed',
-          expected_value: error.schema,
-          actual_value: error.data
-        });
-      }
-    }
-
-    console.log(`✅ Schema validation complete. Found ${errors.length} errors.`);
-    
-    return {
-      is_valid: isValid,
-      errors,
-      total_errors: errors.length
-    };
-  }
-
-  private analyzeStructure(apiData: any, schemaData: any): StructuralAnalysis {
-    console.log('🏗️ Analyzing object structures...');
-    
-    const apiStructure = this.extractObjectStructure(apiData, 'api');
-    const schemaStructure = this.extractSchemaStructure(schemaData);
-    
-    const apiDepth = this.calculateDepth(apiData);
-    const schemaDepth = this.calculateDepth(schemaData.properties || schemaData);
-    
-    const structuralMismatches: string[] = [];
-    
-    // Compare field counts
-    if (apiStructure.total_fields !== schemaStructure.total_fields) {
-      structuralMismatches.push(
-        `Field count mismatch: API has ${apiStructure.total_fields} fields, Schema defines ${schemaStructure.total_fields} fields`
-      );
-    }
-    
-    // Compare required fields
-    const missingRequired = schemaStructure.required_fields.filter(
-      field => !apiStructure.required_fields.includes(field) && !apiStructure.optional_fields.includes(field)
-    );
-    
-    if (missingRequired.length > 0) {
-      structuralMismatches.push(`Missing required fields: ${missingRequired.join(', ')}`);
-    }
-    
-    // Compare nesting depth
-    if (Math.abs(apiDepth - schemaDepth) > 1) {
-      structuralMismatches.push(
-        `Significant nesting depth difference: API depth ${apiDepth}, Schema depth ${schemaDepth}`
-      );
-    }
-
-    return {
-      api_structure: apiStructure,
-      schema_structure: schemaStructure,
-      structural_mismatches,
-      nesting_comparison: {
-        api_depth: apiDepth,
-        schema_depth: schemaDepth,
-        depth_match: Math.abs(apiDepth - schemaDepth) <= 1
-      }
-    };
-  }
-
-  private compareFields(apiData: any, schemaData: any, schemaErrors: SchemaValidationError[]): FieldComparison[] {
-    console.log('🔬 Performing field-by-field comparison...');
-    
-    const comparisons: FieldComparison[] = [];
-    const apiFields = this.flattenObject(apiData);
-    const schemaFields = this.extractSchemaFields(schemaData);
-    const requiredFields = schemaData.required || [];
-    
-    // Get all unique field paths
-    const allFieldPaths = new Set([
-      ...Object.keys(apiFields),
-      ...Object.keys(schemaFields)
-    ]);
-
-    for (const fieldPath of allFieldPaths) {
-      const apiValue = apiFields[fieldPath];
-      const schemaField = schemaFields[fieldPath];
-      const hasApiValue = fieldPath in apiFields;
-      const hasSchemaField = fieldPath in schemaFields;
-      
-      let status: FieldComparison['status'] = 'matched';
-      let issue = '';
-      let suggestion = '';
-      let confidence = 1.0;
-
-      // Determine field status
-      if (!hasApiValue && hasSchemaField) {
-        if (requiredFields.includes(fieldPath) || schemaField.required) {
-          status = 'missing';
-          issue = 'Required field is missing from API response';
-          suggestion = `Add field '${fieldPath}' to API response`;
-          confidence = 1.0;
-        } else {
-          status = 'missing';
-          issue = 'Optional field is missing from API response';
-          suggestion = `Consider adding field '${fieldPath}' or mark as optional in schema`;
-          confidence = 0.8;
-        }
-      } else if (hasApiValue && !hasSchemaField) {
-        status = 'extra';
-        issue = 'Field exists in API but not defined in schema';
-        suggestion = `Add field '${fieldPath}' to schema or remove from API response`;
-        confidence = 0.9;
-      } else if (hasApiValue && hasSchemaField) {
-        // Both exist - validate type and constraints
-        const apiType = this.getDetailedType(apiValue);
-        const schemaType = schemaField.type;
-        
-        if (!this.areTypesCompatible(apiType, schemaType)) {
-          status = 'type_mismatch';
-          issue = `Type mismatch: expected '${schemaType}', got '${apiType}'`;
-          suggestion = `Convert field '${fieldPath}' to type '${schemaType}'`;
-          confidence = 1.0;
-        } else {
-          // Check constraints
-          const constraintViolation = this.checkConstraints(apiValue, schemaField);
-          if (constraintViolation) {
-            status = 'constraint_violation';
-            issue = constraintViolation;
-            suggestion = `Ensure field '${fieldPath}' meets schema constraints`;
-            confidence = 1.0;
-          }
-        }
-      }
-
-      comparisons.push({
-        field_name: fieldPath,
-        status,
-        expected_type: schemaField?.type,
-        actual_type: hasApiValue ? this.getDetailedType(apiValue) : undefined,
-        expected_format: schemaField?.format,
-        actual_format: hasApiValue ? this.detectFormat(apiValue) : undefined,
-        issue,
-        suggestion,
-        confidence,
-        api_value: hasApiValue ? apiValue : undefined,
-        schema_constraints: schemaField
+      const res = await fetch(`${apiBase}/comparison/upload`, {
+        method: "POST",
+        body: formData,
       });
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(text || `Request failed (${res.status})`);
+      }
+      const data: CompareResult = await res.json();
+      setResult(data);
+      setActiveTab("overview");
+    } catch (err: any) {
+      setError(err.message || "Something went wrong");
+    } finally {
+      endTimers();
+      setLoading(false);
     }
+  };
 
-    console.log(`✅ Field comparison complete. Analyzed ${comparisons.length} fields.`);
-    return comparisons;
-  }
+  // Calculate stats for UI
+  const matchedFields = result?.fields?.filter(f => f.status === 'matched') || [];
+  const unresolvedFields = result?.fields?.filter(f => f.status === 'unresolved') || [];
+  const extraFields = result?.fields?.filter(f => f.status === 'extra') || [];
+  const missingFields = result?.fields?.filter(f => f.status === 'missing') || [];
+  const totalCompared = result?.total_fields_compared || 0;
+  const accuracyPct = result?.accuracy_score || 0;
 
-  private calculateMetrics(fieldComparisons: FieldComparison[]) {
-    const total = fieldComparisons.length;
-    const matched = fieldComparisons.filter(f => f.status === 'matched').length;
-    const unresolved = fieldComparisons.filter(f => 
-      f.status === 'unresolved' || f.status === 'type_mismatch' || f.status === 'constraint_violation'
-    ).length;
-    const extra = fieldComparisons.filter(f => f.status === 'extra').length;
-    const missing = fieldComparisons.filter(f => f.status === 'missing').length;
+  return (
+    <main className="max-w-5xl mx-auto my-10 p-6">
+      {/* Progress Bar & Stage Indicator */}
+      {(loading || progress > 0) && (
+        <div className="sticky top-0 z-40 -mt-6 mb-6 pt-4 pb-3 bg-white/70 dark:bg-gray-900/70 backdrop-blur border-b border-gray-200 dark:border-gray-800">
+          <div className="max-w-5xl mx-auto px-6 flex items-center justify-between gap-4">
+            <StepProgress stage={stage} />
+            <div className="text-sm text-gray-700 dark:text-gray-300 tabular-nums">
+              {progress}% • {formatDuration(elapsedMs)}
+            </div>
+          </div>
+          <div className="max-w-5xl mx-auto px-6 mt-2">
+            <div className="w-full h-2 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className="h-2 bg-blue-600 dark:bg-blue-500 transition-all duration-150"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          </div>
+        </div>
+      )}
 
-    return {
-      total_fields_compared: total,
-      matched_fields: matched,
-      unresolved_fields: unresolved,
-      extra_fields: extra,
-      missing_fields: missing,
-      accuracy_score: total > 0 ? Math.round((matched / total) * 100) : 0
+      {/* Header & Description */}
+      <h1 className="text-3xl font-bold mb-2 tracking-tight">AI Validator – Compare API vs Data Model</h1>
+      <p className="text-lg text-gray-700 dark:text-gray-300 mb-4 leading-relaxed">
+        Upload your API sample/spec (JSON/YAML) and Data Model (JSON schema). Drag & drop files or paste JSON directly into the zones.
+      </p>
+
+      {/* Upload Form */}
+      <form
+        onSubmit={handleSubmit}
+        className="grid gap-6 p-6 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 mb-8"
+      >
+        {/* API File DropZone */}
+        <div className="grid gap-2">
+          <span className="font-medium text-lg">API file (.json / .yaml)</span>
+          <DropZone
+            accept={[".json", ".yaml", ".yml", "application/json", "text/yaml"]}
+            fileName={apiFile?.name}
+            onFile={setApiFile}
+            pasteHint="Paste JSON/YAML here (⌘/Ctrl+V)"
+          />
+        </div>
+
+        {/* Data Model DropZone */}
+        <div className="grid gap-2">
+          <span className="font-medium text-lg">Data model file (.json)</span>
+          <DropZone
+            accept={[".json", "application/json"]}
+            fileName={modelFile?.name}
+            onFile={setModelFile}
+            pasteHint="Paste JSON here (⌘/Ctrl+V)"
+          />
+        </div>
+
+        {/* Buttons */}
+        <div className="flex items-center gap-3">
+          <button
+            type="submit"
+            disabled={loading || !apiFile || !modelFile}
+            className={`px-6 py-3 rounded text-white text-lg font-medium transition ${
+              loading ? "bg-gray-400 cursor-not-allowed" : "bg-gray-900 hover:bg-gray-800"
+            }`}
+          >
+            {loading ? "Comparing…" : "Compare"}
+          </button>
+          {result && (
+            <button
+              type="button"
+              onClick={() => {
+                setResult(null);
+                setShowModal(false);
+                setProgress(0);
+                setElapsedMs(0);
+                setApiFile(null);
+                setModelFile(null);
+                setStage("idle");
+                setActiveTab("overview");
+              }}
+              className="px-4 py-3 rounded border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+
+        {/* Error message */}
+        {error && <div className="text-red-600 text-lg mt-2">{error}</div>}
+      </form>
+
+      {/* Results display */}
+      {result && (
+        <>
+          <Tabs
+            tabs={[
+              { key: "overview", label: "Overview", count: totalCompared },
+              { key: "matched", label: "Matched", count: matchedFields.length },
+              { key: "unresolved", label: "Unresolved", count: unresolvedFields.length },
+              { key: "extra", label: "Extra", count: extraFields.length },
+              { key: "missing", label: "Missing", count: missingFields.length },
+            ]}
+            active={activeTab}
+            onChange={(k) => setActiveTab(k as typeof activeTab)}
+          />
+
+          {/* Overview Tab */}
+          {activeTab === "overview" && (
+            <>
+              {/* Stats Tiles */}
+              <section className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
+                <StatTile label="Total" value={totalCompared} />
+                <StatTile label="Matched" value={matchedFields.length} accent="green" />
+                <StatTile label="Unresolved" value={unresolvedFields.length} accent="yellow" />
+                <StatTile label="Extra" value={extraFields.length} accent="blue" />
+                <StatTile label="Missing" value={missingFields.length} accent="purple" />
+              </section>
+
+              {/* Distribution & Accuracy */}
+              <div className="grid sm:grid-cols-2 gap-6 mb-8">
+                {/* Pie Chart */}
+                <div className="p-4 border rounded-xl bg-white dark:bg-gray-900">
+                  <h3 className="text-lg font-semibold mb-3">Distribution</h3>
+                  <PieChart
+                    segments={[
+                      { label: "Matched", value: matchedFields.length, color: "#22c55e" },
+                      { label: "Unresolved", value: unresolvedFields.length, color: "#f59e0b" },
+                      { label: "Extra", value: extraFields.length, color: "#3b82f6" },
+                      { label: "Missing", value: missingFields.length, color: "#8b5cf6" },
+                    ]}
+                  />
+                </div>
+                {/* Accuracy */}
+                <div className="p-4 border rounded-xl bg-white dark:bg-gray-900 flex flex-col justify-center">
+                  <div className="text-sm text-gray-600 dark:text-gray-400 mb-1">
+                    Accuracy Score
+                  </div>
+                  <div className="text-4xl font-semibold">{accuracyPct}%</div>
+                </div>
+              </div>
+
+              {/* Summary Recommendation */}
+              {result.summary_recommendation && (
+                <div className="p-4 border rounded-xl bg-white dark:bg-gray-900 mb-8">
+                  <h3 className="text-lg font-semibold mb-3">Summary Recommendation</h3>
+                  <p className="text-gray-700 dark:text-gray-300">{result.summary_recommendation}</p>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* Matched Tab */}
+          {activeTab === "matched" && (
+            <FieldAnalysisList 
+              title={`Matched Fields (${matchedFields.length})`} 
+              fields={matchedFields} 
+              status="matched"
+            />
+          )}
+
+          {/* Unresolved Tab */}
+          {activeTab === "unresolved" && (
+            <FieldAnalysisList 
+              title={`Unresolved Fields (${unresolvedFields.length})`} 
+              fields={unresolvedFields} 
+              status="unresolved"
+            />
+          )}
+
+          {/* Extra Tab */}
+          {activeTab === "extra" && (
+            <FieldAnalysisList 
+              title={`Extra Fields (${extraFields.length})`} 
+              fields={extraFields} 
+              status="extra"
+            />
+          )}
+
+          {/* Missing Tab */}
+          {activeTab === "missing" && (
+            <FieldAnalysisList 
+              title={`Missing Fields (${missingFields.length})`} 
+              fields={missingFields} 
+              status="missing"
+            />
+          )}
+        </>
+      )}
+
+      {/* Modal for detailed report */}
+      {result && showModal && (
+        <Modal onClose={() => setShowModal(false)}>
+          <ReportOutput result={result} />
+        </Modal>
+      )}
+
+      {/* Button to open modal for report */}
+      {result && !showModal && (
+        <div className="flex justify-end mt-6">
+          <button
+            className="px-6 py-3 rounded border text-white text-lg font-medium bg-blue-700 hover:bg-blue-800 shadow"
+            onClick={() => setShowModal(true)}
+          >
+            View Detailed Report
+          </button>
+        </div>
+      )}
+    </main>
+  );
+}
+
+// New component for displaying field analysis
+function FieldAnalysisList({ title, fields, status }: { 
+  title: string; 
+  fields: FieldAnalysis[]; 
+  status: FieldAnalysis['status'];
+}) {
+  const statusColors = {
+    matched: "bg-green-50 dark:bg-green-900 border-green-200 dark:border-green-800",
+    unresolved: "bg-yellow-50 dark:bg-yellow-900 border-yellow-200 dark:border-yellow-800",
+    extra: "bg-blue-50 dark:bg-blue-900 border-blue-200 dark:border-blue-800",
+    missing: "bg-purple-50 dark:bg-purple-900 border-purple-200 dark:border-purple-800",
+  };
+
+  return (
+    <div className="p-4 border rounded bg-white dark:bg-gray-900 shadow-sm">
+      <h2 className="text-2xl font-semibold mb-4">{title}</h2>
+      <div className="space-y-3">
+        {fields.map((field, idx) => (
+          <div key={idx} className={`p-4 border rounded ${statusColors[status]}`}>
+            <div className="text-lg font-medium mb-2">{field.field_name}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+              <div><span className="font-semibold">Status:</span> {field.status}</div>
+              <div><span className="font-semibold">Expected Type:</span> {field.expected_type}</div>
+              <div><span className="font-semibold">Actual Type:</span> {field.actual_type}</div>
+              <div><span className="font-semibold">Confidence:</span> {field.confidence}</div>
+            </div>
+            {field.issue && (
+              <div className="mt-2">
+                <span className="font-semibold">Issue:</span> {field.issue}
+              </div>
+            )}
+            {field.suggestion && (
+              <div className="mt-2">
+                <span className="font-semibold">Suggestion:</span> {field.suggestion}
+              </div>
+            )}
+          </div>
+        ))}
+        {fields.length === 0 && <EmptyState text={`No ${status} fields.`} />}
+      </div>
+    </div>
+  );
+}
+
+// Utility: format duration
+function formatDuration(ms: number) {
+  const sec = Math.floor(ms / 1000);
+  const minutes = Math.floor(sec / 60);
+  const seconds = sec % 60;
+  return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+}
+
+/* --------------------------- UI Building Blocks --------------------------- */
+
+// Progress Stepper
+function StepProgress({ stage }: { stage: Stage }) {
+  const steps = [
+    { key: "upload", label: "Upload" },
+    { key: "parsing", label: "Parsing" },
+    { key: "matching", label: "Matching" },
+    { key: "report", label: "Report" },
+  ];
+
+  const idx = steps.findIndex((s) => s.key === stage);
+
+  return (
+    <div className="flex items-center gap-3">
+      {steps.map((s, i) => {
+        const done = i < idx;
+        const active = i === idx;
+        const chip =
+          done
+            ? "bg-green-50 border-green-200 text-green-800"
+            : active
+            ? "bg-blue-50 border-blue-200 text-blue-800"
+            : "bg-gray-50 border-gray-200 text-gray-600";
+
+        const dot = done ? "bg-green-500" : active ? "bg-blue-500" : "bg-gray-300";
+
+        return (
+          <div key={s.key} className="flex items-center gap-3">
+            <div className={`h-8 px-3 rounded-full text-sm flex items-center gap-2 border ${chip}`}>
+              <span className={`inline-block w-2 h-2 rounded-full ${dot}`} />
+              {s.label}
+            </div>
+            {i < steps.length - 1 && <div className="w-6 h-[2px] bg-gray-200 dark:bg-gray-700" />}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// Tabs component
+function Tabs({ tabs, active, onChange }: { tabs: { key: string; label: string; count?: number }[]; active: string; onChange: (k: string) => void }) {
+  return (
+    <div className="border-b border-gray-200 dark:border-gray-800 mb-4 flex gap-1 overflow-x-auto">
+      {tabs.map((t) => (
+        <button
+          key={t.key}
+          onClick={() => onChange(t.key)}
+          className={`px-4 py-2 text-sm rounded-t transition ${
+            active === t.key
+              ? "bg-white dark:bg-gray-900 border-x border-t border-gray-200 dark:border-gray-800 font-medium"
+              : "text-gray-600 hover:text-gray-900 dark:text-gray-300"
+          }`}
+        >
+          <span>{t.label}</span>
+          {typeof t.count === "number" && (
+            <span className="ml-2 inline-flex items-center px-2 py-0.5 text-xs rounded-full bg-gray-100 dark:bg-gray-800">
+              {t.count}
+            </span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// Empty state component
+function EmptyState({ text }: { text: string }) {
+  return (
+    <div className="p-6 text-center text-gray-500 dark:text-gray-400 border rounded bg-gray-50 dark:bg-gray-800">
+      {text}
+    </div>
+  );
+}
+
+// Stat Tile
+function StatTile({ label, value, accent }: { label: string; value: number | string; accent?: "green" | "yellow" | "blue" | "purple" }) {
+  const colors: Record<string, string> = {
+    green: "border-green-200 bg-green-50 dark:bg-green-900 dark:border-green-800 dark:text-green-100 text-green-900",
+    yellow: "border-yellow-200 bg-yellow-50 dark:bg-yellow-900 dark:border-yellow-800 dark:text-yellow-100 text-yellow-900",
+    blue: "border-blue-200 bg-blue-50 dark:bg-blue-900 dark:border-blue-800 dark:text-blue-100 text-blue-900",
+    purple: "border-purple-200 bg-purple-50 dark:bg-purple-900 dark:border-purple-800 dark:text-purple-100 text-purple-900",
+  };
+
+  const base =
+    "p-4 rounded-xl border bg-gray-50 dark:bg-gray-900 text-gray-900 dark:text-gray-100 border-gray-200 dark:border-gray-800";
+
+  return (
+    <div className={`${base} ${accent ? colors[accent] : ""}`}>
+      <div className="text-sm opacity-70">{label}</div>
+      <div className="text-2xl font-semibold">{value}</div>
+    </div>
+  );
+}
+
+// Modal component
+function Modal({ children, onClose }: { children: React.ReactNode; onClose: () => void }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60">
+      <div className="bg-white dark:bg-gray-900 rounded-lg shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto relative p-8">
+        <button
+          className="absolute top-4 right-4 text-gray-500 hover:text-gray-900 dark:hover:text-white text-2xl font-bold"
+          onClick={onClose}
+          aria-label="Close"
+        >
+          &times;
+        </button>
+        {children}
+      </div>
+    </div>
+  );
+}
+
+// Report Output component
+function ReportOutput({ result }: { result: CompareResult }) {
+  const matchedFields = result.fields.filter(f => f.status === 'matched');
+  const unresolvedFields = result.fields.filter(f => f.status === 'unresolved');
+  const extraFields = result.fields.filter(f => f.status === 'extra');
+  const missingFields = result.fields.filter(f => f.status === 'missing');
+
+  // Download JSON report
+  const handleDownloadJson = () => {
+    const jsonStr = JSON.stringify(result, null, 2);
+    const blob = new Blob([jsonStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "comparison-report.json";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <>
+      {/* Download Button */}
+      <div className="flex justify-end mb-6 gap-3">
+        <button
+          className="px-5 py-2 rounded bg-blue-500 text-white font-medium hover:bg-blue-700 transition"
+          onClick={handleDownloadJson}
+        >
+          Download JSON Report
+        </button>
+      </div>
+
+      {/* Summary Information */}
+      <div className="grid grid-cols-2 gap-4 mb-6">
+        <div className="p-4 border rounded bg-gray-50 dark:bg-gray-800">
+          <div className="text-sm text-gray-600 dark:text-gray-400">API Name</div>
+          <div className="text-lg font-semibold">{result.api_name}</div>
+        </div>
+        <div className="p-4 border rounded bg-gray-50 dark:bg-gray-800">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Validation Date</div>
+          <div className="text-lg font-semibold">{new Date(result.validation_date).toLocaleString()}</div>
+        </div>
+        <div className="p-4 border rounded bg-gray-50 dark:bg-gray-800">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Total Fields Compared</div>
+          <div className="text-lg font-semibold">{result.total_fields_compared}</div>
+        </div>
+        <div className="p-4 border rounded bg-gray-50 dark:bg-gray-800">
+          <div className="text-sm text-gray-600 dark:text-gray-400">Accuracy Score</div>
+          <div className="text-lg font-semibold">{result.accuracy_score}%</div>
+        </div>
+      </div>
+
+      {/* Summary Recommendation */}
+      {result.summary_recommendation && (
+        <div className="p-4 border rounded bg-yellow-50 dark:bg-yellow-900 border-yellow-200 dark:border-yellow-800 mb-6">
+          <h3 className="text-lg font-semibold mb-2">Summary Recommendation</h3>
+          <p>{result.summary_recommendation}</p>
+        </div>
+      )}
+
+      {/* Results Sections */}
+      {matchedFields.length > 0 && (
+        <FieldAnalysisSection title={`Matched Fields (${matchedFields.length})`} fields={matchedFields} status="matched" />
+      )}
+
+      {unresolvedFields.length > 0 && (
+        <FieldAnalysisSection title={`Unresolved Fields (${unresolvedFields.length})`} fields={unresolvedFields} status="unresolved" />
+      )}
+
+      {extraFields.length > 0 && (
+        <FieldAnalysisSection title={`Extra Fields (${extraFields.length})`} fields={extraFields} status="extra" />
+      )}
+
+      {missingFields.length > 0 && (
+        <FieldAnalysisSection title={`Missing Fields (${missingFields.length})`} fields={missingFields} status="missing" />
+      )}
+    </>
+  );
+}
+
+// Field Analysis Section for modal
+function FieldAnalysisSection({ title, fields, status }: { 
+  title: string; 
+  fields: FieldAnalysis[]; 
+  status: FieldAnalysis['status'];
+}) {
+  const statusColors = {
+    matched: "bg-green-50 dark:bg-green-900 border-green-200 dark:border-green-800",
+    unresolved: "bg-yellow-50 dark:bg-yellow-900 border-yellow-200 dark:border-yellow-800",
+    extra: "bg-blue-50 dark:bg-blue-900 border-blue-200 dark:border-blue-800",
+    missing: "bg-purple-50 dark:bg-purple-900 border-purple-200 dark:border-purple-800",
+  };
+
+  return (
+    <div className="border rounded bg-white dark:bg-gray-900 shadow-sm p-4 mb-6">
+      <h2 className="text-2xl font-semibold mb-4">{title}</h2>
+      <div className="space-y-3">
+        {fields.map((field, idx) => (
+          <div key={idx} className={`p-4 border rounded ${statusColors[status]}`}>
+            <div className="text-lg font-medium mb-2">{field.field_name}</div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-sm">
+              <div><span className="font-semibold">Status:</span> {field.status}</div>
+              <div><span className="font-semibold">Expected Type:</span> {field.expected_type}</div>
+              <div><span className="font-semibold">Actual Type:</span> {field.actual_type}</div>
+              <div><span className="font-semibold">Confidence:</span> {field.confidence}</div>
+            </div>
+            {field.issue && (
+              <div className="mt-2">
+                <span className="font-semibold">Issue:</span> {field.issue}
+              </div>
+            )}
+            {field.suggestion && (
+              <div className="mt-2">
+                <span className="font-semibold">Suggestion:</span> {field.suggestion}
+              </div>
+            )}
+            {field.rationale && (
+              <div className="mt-2">
+                <span className="font-semibold">Rationale:</span> {field.rationale}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// Helper: Pie Chart
+function PieChart({ segments }: { segments: { label: string; value: number; color: string }[] }) {
+  const total = Math.max(segments.reduce((sum, s) => sum + s.value, 0), 1); // prevent division by zero
+
+  // Helper to describe an SVG arc
+  const describeArc = (
+    cx: number,
+    cy: number,
+    r: number,
+    startAngle: number,
+    endAngle: number
+  ) => {
+    const start = {
+      x: cx + r * Math.cos((Math.PI / 180) * startAngle),
+      y: cy + r * Math.sin((Math.PI / 180) * startAngle),
     };
-  }
-
-  private async getAIEnhancements(fieldComparisons: FieldComparison[], schemaErrors: SchemaValidationError[]): Promise<AISuggestion[]> {
-    console.log('🤖 Getting AI enhancement suggestions...');
-    
-    const issues = fieldComparisons.filter(f => f.status !== 'matched').slice(0, 10); // Limit to avoid token limits
-    const criticalErrors = schemaErrors.slice(0, 5);
-
-    const prompt = `
-As an API integration expert, analyze these specific validation issues and provide actionable suggestions:
-
-VALIDATION ISSUES:
-${JSON.stringify(issues, null, 2)}
-
-SCHEMA ERRORS:
-${JSON.stringify(criticalErrors, null, 2)}
-
-Provide intelligent suggestions for:
-1. Field mapping recommendations (e.g., user_id ↔ userId)
-2. Data transformation needs
-3. Schema adjustments
-4. Integration patterns
-
-Return a JSON array of suggestions with type, description, confidence, and action_required fields.
-`;
-
-    try {
-      const completion = await this.openai.chat.completions.create({
-        model: 'gpt-4o',
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 1000
-      });
-
-      const response = completion.choices[0].message?.content;
-      if (response) {
-        const cleaned = this.cleanJsonResponse(response);
-        const suggestions = JSON.parse(cleaned);
-        console.log(`✅ AI provided ${suggestions.length} suggestions.`);
-        return Array.isArray(suggestions) ? suggestions : [];
-      }
-    } catch (error) {
-      console.warn('⚠️ AI enhancement failed:', error.message);
-    }
-
-    return [];
-  }
-
-  // Helper methods
-  private extractObjectStructure(obj: any, type: string): ObjectStructure {
-    const fields = this.flattenObject(obj);
-    const fieldNames = Object.keys(fields);
-    
-    return {
-      total_fields: fieldNames.length,
-      required_fields: fieldNames, // In API response, all present fields are "required"
-      optional_fields: [],
-      nested_objects: fieldNames.filter(name => typeof fields[name] === 'object' && fields[name] !== null),
-      array_fields: fieldNames.filter(name => Array.isArray(fields[name])),
-      field_types: Object.fromEntries(
-        fieldNames.map(name => [name, this.getDetailedType(fields[name])])
-      )
+    const end = {
+      x: cx + r * Math.cos((Math.PI / 180) * endAngle),
+      y: cy + r * Math.sin((Math.PI / 180) * endAngle),
     };
-  }
+    const largeArcFlag = endAngle - startAngle > 180 ? 1 : 0;
+    return [
+      `M ${cx} ${cy}`,
+      `L ${start.x} ${start.y}`,
+      `A ${r} ${r} 0 ${largeArcFlag} 1 ${end.x} ${end.y}`,
+      "Z",
+    ].join(" ");
+  };
 
-  private extractSchemaStructure(schema: any): ObjectStructure {
-    const properties = schema.properties || {};
-    const required = schema.required || [];
-    const fieldNames = Object.keys(properties);
-    
-    return {
-      total_fields: fieldNames.length,
-      required_fields: required,
-      optional_fields: fieldNames.filter(name => !required.includes(name)),
-      nested_objects: fieldNames.filter(name => properties[name]?.type === 'object'),
-      array_fields: fieldNames.filter(name => properties[name]?.type === 'array'),
-      field_types: Object.fromEntries(
-        fieldNames.map(name => [name, properties[name]?.type || 'unknown'])
-      )
-    };
-  }
+  const cx = 70;
+  const cy = 70;
+  const r = 54;
 
-  private flattenObject(obj: any, prefix = '', result: Record<string, any> = {}): Record<string, any> {
-    for (const [key, value] of Object.entries(obj)) {
-      const newKey = prefix ? `${prefix}.${key}` : key;
-      
-      if (value !== null && typeof value === 'object' && !Array.isArray(value)) {
-        // Recursively flatten nested objects
-        this.flattenObject(value, newKey, result);
-      } else {
-        result[newKey] = value;
+  let currentAngle = 0;
+
+  return (
+    <div className="flex items-center gap-6">
+      <svg viewBox="0 0 140 140" width="140" height="140" className="shrink-0">
+        {segments.map((s, i) => {
+          const angle = (s.value / total) * 360;
+          const path = describeArc(cx, cy, r, currentAngle, currentAngle + angle);
+          currentAngle += angle;
+          return <path key={i} d={path} fill={s.color} stroke="#fff" strokeWidth={2} />;
+        })}
+      </svg>
+      <ul className="space-y-2">
+        {segments.map((s, i) => (
+          <li key={i} className="flex items-center gap-3 text-sm">
+            <span className="inline-block w-3 h-3 rounded" style={{ backgroundColor: s.color }} />
+            <span className="min-w-[6rem]">{s.label}</span>
+            <span className="tabular-nums">{s.value}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+// DropZone component for file upload and paste
+function DropZone({
+  accept,
+  fileName,
+  onFile,
+  pasteHint = "Paste here",
+}: {
+  accept: string[];
+  fileName?: string;
+  onFile: (f: File) => void;
+  pasteHint?: string;
+}) {
+  const [dragOver, setDragOver] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const zoneRef = useRef<HTMLDivElement | null>(null);
+
+  const matchesAccept = (file: File) => {
+    const name = file.name.toLowerCase();
+    const type = file.type;
+    return accept.some((a) => (a.startsWith(".") ? name.endsWith(a) : type === a));
+  };
+
+  const handleFiles = (files: FileList | null) => {
+    if (!files || files.length === 0) return;
+    const file = files[0];
+    if (!matchesAccept(file)) {
+      setError(`Unsupported file type: ${file.type || file.name}`);
+      return;
+    }
+    setError(null);
+    onFile(file);
+  };
+
+  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOver(false);
+    handleFiles(e.dataTransfer.files);
+  };
+
+  const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const text = e.clipboardData.getData("text");
+    if (text) {
+      try {
+        const parsed = JSON.parse(text);
+        const blob = new Blob([JSON.stringify(parsed, null, 2)], { type: "application/json" });
+        const file = new File([blob], `pasted-${Date.now()}.json`, { type: "application/json" });
+        setError(null);
+        onFile(file);
+      } catch (err) {
+        setError("Pasted text is not valid JSON");
       }
     }
-    return result;
-  }
+  };
 
-  private extractSchemaFields(schema: any, prefix = '', result: Record<string, any> = {}): Record<string, any> {
-    const properties = schema.properties || {};
-    const required = schema.required || [];
-    
-    for (const [key, fieldSchema] of Object.entries(properties)) {
-      const newKey = prefix ? `${prefix}.${key}` : key;
-      const fieldSchemaObj = fieldSchema as any;
-      
-      result[newKey] = {
-        type: fieldSchemaObj.type,
-        format: fieldSchemaObj.format,
-        required: required.includes(key),
-        enum: fieldSchemaObj.enum,
-        minimum: fieldSchemaObj.minimum,
-        maximum: fieldSchemaObj.maximum,
-        minLength: fieldSchemaObj.minLength,
-        maxLength: fieldSchemaObj.maxLength,
-        pattern: fieldSchemaObj.pattern
-      };
-      
-      // Handle nested objects
-      if (fieldSchemaObj.type === 'object' && fieldSchemaObj.properties) {
-        this.extractSchemaFields(fieldSchemaObj, newKey, result);
-      }
-    }
-    
-    return result;
-  }
+  const handlePick = () => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept.join(",");
+    input.onchange = () => handleFiles(input.files);
+    input.click();
+  };
 
-  private calculateDepth(obj: any, depth = 0): number {
-    if (!obj || typeof obj !== 'object') return depth;
-    
-    let maxDepth = depth;
-    for (const value of Object.values(obj)) {
-      if (value && typeof value === 'object' && !Array.isArray(value)) {
-        maxDepth = Math.max(maxDepth, this.calculateDepth(value, depth + 1));
-      }
-    }
-    return maxDepth;
-  }
-
-  private getDetailedType(value: any): string {
-    if (value === null) return 'null';
-    if (Array.isArray(value)) return 'array';
-    if (value instanceof Date) return 'string'; // Dates are usually strings in JSON
-    
-    const type = typeof value;
-    if (type === 'string') {
-      // Detect common string formats
-      if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) return 'string';
-      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return 'string';
-    }
-    
-    return type;
-  }
-
-  private areTypesCompatible(apiType: string, schemaType: string): boolean {
-    if (apiType === schemaType) return true;
-    
-    const compatibilityMap: Record<string, string[]> = {
-      'number': ['integer', 'number'],
-      'integer': ['number', 'integer'],
-      'string': ['string'],
-      'boolean': ['boolean'],
-      'array': ['array'],
-      'object': ['object'],
-      'null': ['null']
-    };
-    
-    return compatibilityMap[apiType]?.includes(schemaType) || false;
-  }
-
-  private checkConstraints(value: any, schemaField: any): string | null {
-    if (!schemaField) return null;
-    
-    // Enum validation
-    if (schemaField.enum && !schemaField.enum.includes(value)) {
-      return `Value '${value}' not in allowed enum: [${schemaField.enum.join(', ')}]`;
-    }
-    
-    // String constraints
-    if (typeof value === 'string') {
-      if (schemaField.minLength && value.length < schemaField.minLength) {
-        return `String too short: ${value.length} < ${schemaField.minLength}`;
-      }
-      if (schemaField.maxLength && value.length > schemaField.maxLength) {
-        return `String too long: ${value.length} > ${schemaField.maxLength}`;
-      }
-      if (schemaField.pattern && !new RegExp(schemaField.pattern).test(value)) {
-        return `String doesn't match pattern: ${schemaField.pattern}`;
-      }
-    }
-    
-    // Number constraints
-    if (typeof value === 'number') {
-      if (schemaField.minimum && value < schemaField.minimum) {
-        return `Number too small: ${value} < ${schemaField.minimum}`;
-      }
-      if (schemaField.maximum && value > schemaField.maximum) {
-        return `Number too large: ${value} > ${schemaField.maximum}`;
-      }
-    }
-    
-    return null;
-  }
-
-  private detectFormat(value: any): string | undefined {
-    if (typeof value !== 'string') return undefined;
-    
-    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) return 'date-time';
-    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'date';
-    if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)) return 'email';
-    if (/^https?:\/\//.test(value)) return 'uri';
-    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value)) return 'uuid';
-    
-    return undefined;
-  }
-
-  private extractApiName(schema: any): string | null {
-    return schema.title || schema.$id || schema.name || null;
-  }
-
-  private generateSummary(metrics: any, schemaValidation: any, structuralAnalysis: StructuralAnalysis): string {
-    const issues = [];
-    
-    if (metrics.accuracy_score < 80) {
-      issues.push('Low field matching accuracy');
-    }
-    
-    if (schemaValidation.total_errors > 0) {
-      issues.push(`${schemaValidation.total_errors} schema validation errors`);
-    }
-    
-    if (structuralAnalysis.structural_mismatches.length > 0) {
-      issues.push('Structural inconsistencies detected');
-    }
-    
-    if (issues.length === 0) {
-      return 'API response validates successfully against schema with high accuracy.';
-    }
-    
-    return `Issues found: ${issues.join(', ')}. Review field mappings and schema constraints.`;
-  }
-
-  private cleanJsonResponse(response: string): string {
-    return response.replace(/```json\n?|\n?```/g, '').trim();
-  }
+  return (
+    <div className="space-y-2">
+      <div
+        ref={zoneRef}
+        onDragOver={(e) => {
+          e.preventDefault();
+          setDragOver(true);
+        }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={handleDrop}
+        onPaste={handlePaste}
+        role="button"
+        tabIndex={0}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") handlePick();
+        }}
+        className={`flex flex-col items-center justify-center gap-2 p-6 border-2 border-dashed rounded-xl text-center cursor-pointer select-none ${
+          dragOver
+            ? "border-blue-600 bg-blue-50 dark:bg-blue-900/30"
+            : "border-gray-300 dark:border-gray-700"
+        } hover:border-blue-500`}
+        onClick={handlePick}
+        aria-label="Upload or paste file"
+      >
+        <span className="text-base text-gray-700 dark:text-gray-300">
+          Drop file here, <span className="underline">click to browse</span>, or <span className="font-medium">{pasteHint}</span>
+        </span>
+        <span className="text-sm text-gray-500 dark:text-gray-400">Accepted: {accept.join(", ")}</span>
+        {fileName && (
+          <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-gray-100 dark:bg-gray-800 text-gray-800 dark:text-gray-200 text-sm mt-2">
+            Selected: {fileName}
+          </span>
+        )}
+        {error && <div className="text-red-600 text-sm">{error}</div>}
+      </div>
+    </div>
+  );
 }

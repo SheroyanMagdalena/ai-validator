@@ -124,6 +124,8 @@ export class ComparisonService {
 
   private validateSchemaConstraints(apiData: any, schemaData: any): { violations: string[]; validatedFields: string[] } {
     const violations: string[] = [];
+    const validatedFields: string[] = [];
+    
     if (Array.isArray(schemaData.required)) {
       for (const field of schemaData.required) {
         if (!(field in apiData)) {
@@ -131,9 +133,11 @@ export class ComparisonService {
         }
       }
     }
+    
     if (schemaData.properties && typeof schemaData.properties === 'object') {
       const props = schemaData.properties as Record<string, any>;
       for (const [fname, fSchema] of Object.entries(props)) {
+        validatedFields.push(fname);
         const val = apiData[fname];
         if (val !== undefined) {
           if (Array.isArray(fSchema.enum) && !fSchema.enum.includes(val)) {
@@ -151,14 +155,15 @@ export class ComparisonService {
         }
       }
     }
-    return { violations, validatedFields: Object.keys(schemaData.properties || {}) };
+    
+    return { violations, validatedFields };
   }
 
   private async getAISemanticAnalysis(raw: any[], constraints: any): Promise<any> {
     const semanticPrompt = `
 You are an expert in API data modeling and JSON Schema analysis.
 
-Analyze these field comparison results (including nested paths) and provide intelligentsuggestions.
+Analyze these field comparison results (including nested paths) and provide intelligent suggestions.
 
 Inputs:
 
@@ -183,8 +188,7 @@ Your tasks:
 4. Provide **intelligent suggestions** for improving API responses or schema definitions to ensure alignment.
 5. Highlight **fields that require transformation** (e.g., date formatting, enum mapping, string-to-integer conversions).
 
-
-Output JSON:
+Return ONLY a valid JSON object with a "suggestions" array containing objects with "field" and "recommendation" properties.
 
 `;
 
@@ -195,7 +199,12 @@ Output JSON:
         temperature: 0.3,
       });
       const content = resp.choices[0].message?.content ?? '{}';
-      return JSON.parse(this.cleanJsonResponse(content));
+      const parsed = JSON.parse(this.cleanJsonResponse(content));
+      
+      // Ensure the response has a suggestions array
+      return {
+        suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : []
+      };
     } catch {
       return { suggestions: [] };
     }
@@ -221,7 +230,7 @@ Output JSON:
         expected_format: f.schemaConstraints?.format ?? null,
         actual_format: this.detectFormat(f.apiValue),
         issue: f.validationErrors.join('; '),
-        suggestion: this.findAISuggestion(ai.suggestions, f.path),
+        suggestion: this.findAISuggestion(ai?.suggestions, f.path),
         confidence: f.confidence || 1.0,
         rationale: '',
       };
@@ -334,7 +343,10 @@ Output JSON:
     }
   }
 
-  private findAISuggestion(suggestions: any[], fieldPath: string): string {
+  private findAISuggestion(suggestions: any[] | undefined, fieldPath: string): string {
+    if (!suggestions || !Array.isArray(suggestions)) {
+      return '';
+    }
     const item = suggestions.find((s: any) => s.field === fieldPath);
     return item ? item.recommendation : '';
   }
