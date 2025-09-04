@@ -1,18 +1,20 @@
 import { Injectable } from '@nestjs/common';
 import OpenAI from 'openai';
 
-interface FieldAnalysis {
-  path: string;
-  apiValue?: any;
-  apiType?: string;
-  schemaType?: string;
-  schemaConstraints?: any;
-  isRequired?: boolean;
-  validationErrors: string[];
+export interface FieldAnalysis {
+  field_name: string;
+  status: 'matched' | 'unresolved' | 'extra' | 'missing';
+  expected_type: string;
+  actual_type: string;
+  expected_format: string | null;
+  actual_format: string | null;
+  issue: string;
+  suggestion: string;
   confidence: number;
+  rationale: string;
 }
 
-interface ComparisonResult {
+export interface ComparisonResult {
   api_name: string;
   validation_date: string;
   total_fields_compared: number;
@@ -22,34 +24,22 @@ interface ComparisonResult {
   missing_fields: number;
   accuracy_score: number;
   fields: FieldAnalysis[];
-  structural_issues: string[];
-  constraint_violations: string[];
-  summary_recommendation: string;
 }
 
 @Injectable()
-export class EnhancedComparisonService {
+export class ComparisonService {
   private openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   async compareWithAI(apiJson: string, modelJson: string): Promise<ComparisonResult> {
-    // Step 1: Parse and validate inputs
     const apiData = this.parseAndValidate(apiJson, 'API');
     const schemaData = this.parseAndValidate(modelJson, 'Schema');
 
-    // Step 2: Perform structural analysis
     const structuralAnalysis = this.analyzeStructure(apiData, schemaData);
-
-    // Step 3: Deep field-by-field comparison
-    const fieldAnalysis = this.performDeepFieldComparison(apiData, schemaData);
-
-    // Step 4: Validate schema constraints
+    const rawFieldAnalysis = this.performDeepFieldComparison(apiData, schemaData);
     const constraintValidation = this.validateSchemaConstraints(apiData, schemaData);
+    const aiAnalysis = await this.getAISemanticAnalysis(rawFieldAnalysis, constraintValidation);
 
-    // Step 5: Use AI for semantic analysis and suggestions
-    const aiAnalysis = await this.getAISemanticAnalysis(fieldAnalysis, constraintValidation);
-
-    // Step 6: Compile comprehensive results
-    return this.compileResults(fieldAnalysis, constraintValidation, structuralAnalysis, aiAnalysis);
+    return this.compileResults(rawFieldAnalysis, constraintValidation, structuralAnalysis, aiAnalysis);
   }
 
   private parseAndValidate(jsonString: string, type: string): any {
@@ -59,318 +49,297 @@ export class EnhancedComparisonService {
         throw new Error(`${type} must be a valid JSON object`);
       }
       return parsed;
-    } catch (error) {
-      throw new Error(`Invalid ${type} JSON: ${error.message}`);
+    } catch (err: any) {
+      throw new Error(`Invalid ${type} JSON: ${err.message}`);
     }
   }
 
-  private analyzeStructure(apiData: any, schemaData: any): any {
+  private analyzeStructure(apiData: any, schemaData: any): {
+    apiDepth: number;
+    schemaDepth: number;
+    structuralMismatches: string[];
+  } {
     const analysis = {
       apiDepth: this.calculateNestingDepth(apiData),
       schemaDepth: this.calculateNestingDepth(schemaData),
-      apiArrayFields: this.findArrayFields(apiData),
-      schemaArrayFields: this.findArrayFields(schemaData),
-      apiObjectFields: this.findObjectFields(apiData),
-      schemaObjectFields: this.findObjectFields(schemaData),
-      structuralMismatches: []
+      structuralMismatches: [] as string[],
     };
-
-    // Compare structural patterns
     if (analysis.apiDepth !== analysis.schemaDepth) {
       analysis.structuralMismatches.push(
         `Nesting depth mismatch: API has ${analysis.apiDepth} levels, Schema expects ${analysis.schemaDepth}`
       );
     }
-
     return analysis;
   }
 
-  private performDeepFieldComparison(apiData: any, schemaData: any): FieldAnalysis[] {
-    const results: FieldAnalysis[] = [];
+  private performDeepFieldComparison(apiData: any, schemaData: any): any[] {
+    const results: any[] = [];
     const apiPaths = this.getAllFieldPaths(apiData);
     const schemaPaths = this.getAllSchemaFieldPaths(schemaData);
-    
-    // Analyze all unique paths
     const allPaths = new Set([...apiPaths.keys(), ...schemaPaths.keys()]);
-    
+
     for (const path of allPaths) {
       const apiField = apiPaths.get(path);
       const schemaField = schemaPaths.get(path);
-      
-      const analysis: FieldAnalysis = {
+
+      const analysis: any = {
         path,
-        apiValue: apiField?.value,
         apiType: apiField?.type,
         schemaType: schemaField?.type,
+        isRequired: !!schemaField?.required,
+        validationErrors: [] as string[],
+        apiValue: apiField?.value,
         schemaConstraints: schemaField?.constraints,
-        isRequired: schemaField?.required || false,
-        validationErrors: [],
-        confidence: 1.0
+        confidence: 1.0,
       };
 
-      // Perform detailed validation
       this.validateFieldMatch(analysis, apiField, schemaField);
       results.push(analysis);
     }
 
-    // Look for semantic matches (e.g., user_id vs userId)
-    this.findSemanticMatches(results, apiPaths, schemaPaths);
-
     return results;
   }
 
-  private validateFieldMatch(analysis: FieldAnalysis, apiField: any, schemaField: any) {
-    // Missing field validation
+  private validateFieldMatch(analysis: any, apiField: any, schemaField: any): void {
     if (!apiField && schemaField?.required) {
-      analysis.validationErrors.push(`Required field '${analysis.path}' is missing from API response`);
+      analysis.validationErrors.push(`Field '${analysis.path}' is required but missing`);
     }
-    
     if (apiField && !schemaField) {
-      analysis.validationErrors.push(`Extra field '${analysis.path}' found in API response but not in schema`);
+      analysis.validationErrors.push(`Field '${analysis.path}' is extra in API response`);
     }
-
     if (!apiField || !schemaField) return;
 
-    // Type validation
-    if (analysis.apiType !== analysis.schemaType) {
-      // Check for compatible types
+    if (analysis.apiType && analysis.schemaType) {
       if (!this.areTypesCompatible(analysis.apiType, analysis.schemaType)) {
         analysis.validationErrors.push(
-          `Type mismatch: expected '${analysis.schemaType}', got '${analysis.apiType}'`
+          `Type mismatch for '${analysis.path}': expected ${analysis.schemaType}, got ${analysis.apiType}`
         );
       }
     }
 
-    // Value constraint validation
     if (schemaField.constraints) {
       this.validateConstraints(analysis, apiField.value, schemaField.constraints);
     }
   }
 
-  private validateSchemaConstraints(apiData: any, schemaData: any): any {
-    const violations = [];
-    
-    // Check for required fields
-    if (schemaData.required && Array.isArray(schemaData.required)) {
-      for (const requiredField of schemaData.required) {
-        if (!(requiredField in apiData)) {
-          violations.push(`Required field '${requiredField}' is missing`);
+  private validateSchemaConstraints(apiData: any, schemaData: any): { violations: string[]; validatedFields: string[] } {
+    const violations: string[] = [];
+    if (Array.isArray(schemaData.required)) {
+      for (const field of schemaData.required) {
+        if (!(field in apiData)) {
+          violations.push(`Required field '${field}' is missing`);
         }
       }
     }
-
-    // Validate against JSON Schema properties
-    if (schemaData.properties) {
-      for (const [fieldName, fieldSchema] of Object.entries(schemaData.properties)) {
-        const fieldValue = apiData[fieldName];
-        const schemaConstraints = fieldSchema as any;
-        
-        if (fieldValue !== undefined) {
-          // Enum validation
-          if (schemaConstraints.enum && !schemaConstraints.enum.includes(fieldValue)) {
-            violations.push(`Field '${fieldName}' value '${fieldValue}' not in allowed enum: ${schemaConstraints.enum.join(', ')}`);
+    if (schemaData.properties && typeof schemaData.properties === 'object') {
+      const props = schemaData.properties as Record<string, any>;
+      for (const [fname, fSchema] of Object.entries(props)) {
+        const val = apiData[fname];
+        if (val !== undefined) {
+          if (Array.isArray(fSchema.enum) && !fSchema.enum.includes(val)) {
+            violations.push(`Field '${fname}' with value '${val}' not in enum: ${fSchema.enum.join(', ')}`);
           }
-          
-          // String length validation
-          if (schemaConstraints.minLength && typeof fieldValue === 'string' && fieldValue.length < schemaConstraints.minLength) {
-            violations.push(`Field '${fieldName}' is too short (min: ${schemaConstraints.minLength})`);
+          if (fSchema.minLength && typeof val === 'string' && val.length < fSchema.minLength) {
+            violations.push(`Field '${fname}' too short (minLength: ${fSchema.minLength})`);
           }
-          
-          // Number range validation
-          if (schemaConstraints.minimum && typeof fieldValue === 'number' && fieldValue < schemaConstraints.minimum) {
-            violations.push(`Field '${fieldName}' is below minimum value (${schemaConstraints.minimum})`);
+          if (fSchema.minimum !== undefined && typeof val === 'number' && val < fSchema.minimum) {
+            violations.push(`Field '${fname}' below minimum (${fSchema.minimum})`);
           }
-          
-          // Pattern validation
-          if (schemaConstraints.pattern && typeof fieldValue === 'string') {
-            const regex = new RegExp(schemaConstraints.pattern);
-            if (!regex.test(fieldValue)) {
-              violations.push(`Field '${fieldName}' doesn't match required pattern: ${schemaConstraints.pattern}`);
-            }
+          if (fSchema.pattern && typeof val === 'string' && !new RegExp(fSchema.pattern).test(val)) {
+            violations.push(`Field '${fname}' does not match pattern: ${fSchema.pattern}`);
           }
         }
       }
     }
-
     return { violations, validatedFields: Object.keys(schemaData.properties || {}) };
   }
 
-  private async getAISemanticAnalysis(fieldAnalysis: FieldAnalysis[], constraintValidation: any): Promise<any> {
+  private async getAISemanticAnalysis(raw: any[], constraints: any): Promise<any> {
     const semanticPrompt = `
-Analyze these field validation results for semantic relationships and provide intelligent suggestions:
+You are an expert in API data modeling and JSON Schema analysis.
 
-Field Analysis: ${JSON.stringify(fieldAnalysis.slice(0, 20), null, 2)}
-Constraint Violations: ${JSON.stringify(constraintValidation.violations)}
+Analyze these field comparison results (including nested paths) and provide intelligentsuggestions.
 
-Focus on:
-1. Identifying semantic field matches (e.g., user_id ↔ userId, created_at ↔ createdDate)
-2. Suggesting field mappings for unmatched fields
-3. Identifying structural patterns that suggest data transformation needs
-4. Providing actionable recommendations for API/schema alignment
+Inputs:
 
-Return a JSON object with suggestions for field mappings and general recommendations.
+Field Analysis (up to 20 entries):
+${JSON.stringify(raw.slice(0, 20), null, 2)}
+
+Constraint Violations:
+${JSON.stringify(constraints.violations || [], null, 2)}
+
+Match Categorization Rules:
+1. Matched Field: exists in both, types match, no errors.
+2. Unresolved Field: exists in both but with validation errors.
+3. API Only: exists in API, not Schema.
+4. Model Only: required in schema but missing from API.
+
+Include nested field paths like 'user.profile.name'. Also compute total_fields_compared (unique paths).
+
+Your tasks:
+1. Identify **likely semantic field matches** (such as user_id ↔ userId, or created_at ↔ createdDate).
+2. Recommend **field mappings or transformations** where names, types, or formats differ but are likely equivalent.
+3. Flag any **structural issues** that suggest mismatches in nesting, missing parents, or unexpected arrays/objects.
+4. Provide **intelligent suggestions** for improving API responses or schema definitions to ensure alignment.
+5. Highlight **fields that require transformation** (e.g., date formatting, enum mapping, string-to-integer conversions).
+
+
+Output JSON:
+
 `;
 
     try {
-      const completion = await this.openai.chat.completions.create({
+      const resp = await this.openai.chat.completions.create({
         model: 'gpt-4o',
         messages: [{ role: 'user', content: semanticPrompt }],
         temperature: 0.3,
       });
-
-      const response = completion.choices[0].message?.content;
-      return response ? JSON.parse(this.cleanJsonResponse(response)) : { suggestions: [] };
-    } catch (error) {
-      console.error('AI semantic analysis failed:', error);
-      return { suggestions: [], error: error.message };
+      const content = resp.choices[0].message?.content ?? '{}';
+      return JSON.parse(this.cleanJsonResponse(content));
+    } catch {
+      return { suggestions: [] };
     }
   }
 
   private compileResults(
-    fieldAnalysis: FieldAnalysis[],
-    constraintValidation: any,
-    structuralAnalysis: any,
-    aiAnalysis: any
+    raw: any[],
+    constraints: { violations: string[]; validatedFields: string[] },
+    structure: any,
+    ai: any
   ): ComparisonResult {
-    const matched = fieldAnalysis.filter(f => f.validationErrors.length === 0);
-    const unresolved = fieldAnalysis.filter(f => f.validationErrors.length > 0);
-    
+    const fields: FieldAnalysis[] = raw.map(f => {
+      const status = !f.apiType && f.isRequired ? 'missing'
+                    : f.apiType && !f.schemaType ? 'extra'
+                    : f.validationErrors.length ? 'unresolved'
+                    : 'matched';
+
+      return {
+        field_name: f.path,
+        status,
+        expected_type: f.schemaType || '',
+        actual_type: f.apiType || '',
+        expected_format: f.schemaConstraints?.format ?? null,
+        actual_format: this.detectFormat(f.apiValue),
+        issue: f.validationErrors.join('; '),
+        suggestion: this.findAISuggestion(ai.suggestions, f.path),
+        confidence: f.confidence || 1.0,
+        rationale: '',
+      };
+    });
+
+    const matched = fields.filter(x => x.status === 'matched').length;
+    const unresolved = fields.filter(x => x.status === 'unresolved').length;
+    const extra = fields.filter(x => x.status === 'extra').length;
+    const missing = fields.filter(x => x.status === 'missing').length;
+
     return {
       api_name: 'API Comparison',
       validation_date: new Date().toISOString(),
-      total_fields_compared: fieldAnalysis.length,
-      matched_fields: matched.length,
-      unresolved_fields: unresolved.length,
-      extra_fields: fieldAnalysis.filter(f => f.apiValue !== undefined && f.schemaType === undefined).length,
-      missing_fields: fieldAnalysis.filter(f => f.apiValue === undefined && f.isRequired).length,
-      accuracy_score: Math.round((matched.length / fieldAnalysis.length) * 100),
-      fields: fieldAnalysis,
-      structural_issues: structuralAnalysis.structuralMismatches,
-      constraint_violations: constraintValidation.violations,
-      summary_recommendation: this.generateSummaryRecommendation(fieldAnalysis, constraintValidation, aiAnalysis)
+      total_fields_compared: fields.length,
+      matched_fields: matched,
+      unresolved_fields: unresolved,
+      extra_fields: extra,
+      missing_fields: missing,
+      accuracy_score: fields.length ? Math.round((matched / fields.length) * 100) : 0,
+      fields,
     };
   }
 
-  // Helper methods
-  private calculateNestingDepth(obj: any, depth = 0): number {
+  /** Helper Methods **/
+
+  private calculateNestingDepth(obj: Record<string, any>, depth = 0): number {
     if (typeof obj !== 'object' || obj === null) return depth;
-    
-    let maxDepth = depth;
-    for (const value of Object.values(obj)) {
-      if (typeof value === 'object' && value !== null) {
-        maxDepth = Math.max(maxDepth, this.calculateNestingDepth(value, depth + 1));
-      }
-    }
-    return maxDepth;
+    return Object.values(obj).reduce((max, v: any) =>
+      Math.max(max, this.calculateNestingDepth(v, depth + 1)),
+      depth
+    );
   }
 
-  private getAllFieldPaths(obj: any, prefix = ''): Map<string, any> {
-    const paths = new Map();
-    
-    if (typeof obj !== 'object' || obj === null) {
-      return paths;
-    }
-
-    for (const [key, value] of Object.entries(obj)) {
-      const currentPath = prefix ? `${prefix}.${key}` : key;
-      
-      paths.set(currentPath, {
-        value,
-        type: this.getDetailedType(value),
-        path: currentPath
-      });
-
-      // Recursively process nested objects
-      if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
-        const nestedPaths = this.getAllFieldPaths(value, currentPath);
-        nestedPaths.forEach((nestedValue, nestedKey) => {
-          paths.set(nestedKey, nestedValue);
-        });
-      }
-    }
-
-    return paths;
-  }
-
-  private getAllSchemaFieldPaths(schema: any, prefix = ''): Map<string, any> {
-    const paths = new Map();
-    
-    if (!schema || typeof schema !== 'object') return paths;
-
-    // Handle JSON Schema properties
-    if (schema.properties) {
-      for (const [key, fieldSchema] of Object.entries(schema.properties)) {
-        const currentPath = prefix ? `${prefix}.${key}` : key;
-        const fieldSchemaObj = fieldSchema as any;
-        
-        paths.set(currentPath, {
-          type: fieldSchemaObj.type,
-          constraints: fieldSchemaObj,
-          required: schema.required?.includes(key) || false,
-          path: currentPath
-        });
-
-        // Handle nested object schemas
-        if (fieldSchemaObj.type === 'object' && fieldSchemaObj.properties) {
-          const nestedPaths = this.getAllSchemaFieldPaths(fieldSchemaObj, currentPath);
-          nestedPaths.forEach((nestedValue, nestedKey) => {
-            paths.set(nestedKey, nestedValue);
-          });
+  private getAllFieldPaths(obj: any, prefix = ''): Map<string, { value: any; type: string }> {
+    const map = new Map<string, any>();
+    if (obj && typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj)) {
+        const path = prefix ? `${prefix}.${k}` : k;
+        map.set(path, { value: v, type: this.detectFormatType(v) });
+        if (v && typeof v === 'object') {
+          this.getAllFieldPaths(v, path).forEach((info, p) => map.set(p, info));
         }
       }
     }
-
-    return paths;
+    return map;
   }
 
-  private getDetailedType(value: any): string {
+  private getAllSchemaFieldPaths(schema: any, prefix = ''): Map<string, { type?: string; constraints?: any; required?: boolean }> {
+    const map = new Map<string, any>();
+    if (schema?.properties && typeof schema.properties === 'object') {
+      const props = schema.properties as Record<string, any>;
+      for (const key of Object.keys(props)) {
+        const s = props[key];
+        const path = prefix ? `${prefix}.${key}` : key;
+        map.set(path, {
+          type: s.type,
+          constraints: s,
+          required: Array.isArray(schema.required) && schema.required.includes(key),
+        });
+        if (s.type === 'object') {
+          this.getAllSchemaFieldPaths(s, path).forEach((info, p) => map.set(p, info));
+        }
+      }
+    }
+    return map;
+  }
+
+  private detectFormatType(value: any): string {
     if (value === null) return 'null';
     if (Array.isArray(value)) return 'array';
-    if (value instanceof Date) return 'date';
-    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/.test(value)) return 'datetime';
-    if (typeof value === 'string' && /^[a-f0-9\-]{36}$/i.test(value)) return 'uuid';
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) return 'datetime';
+    if (typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value)) return 'uuid';
     return typeof value;
   }
 
+  private detectFormat(value: any): string | null {
+    if (typeof value === 'string') {
+      if (/^\d{4}-\d{2}-\d{2}T/.test(value)) return 'date-time';
+      if (/^[a-f0-9-]{36}$/i.test(value)) return 'uuid';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return 'date';
+    }
+    return null;
+  }
+
   private areTypesCompatible(apiType: string, schemaType: string): boolean {
-    const compatibilityMap = {
-      'string': ['string', 'datetime', 'uuid'],
-      'number': ['number', 'integer'],
-      'integer': ['number', 'integer'],
-      'boolean': ['boolean'],
-      'array': ['array'],
-      'object': ['object'],
-      'null': ['null']
+    const map: Record<string, string[]> = {
+      string: ['string', 'datetime', 'uuid'],
+      number: ['number', 'integer'],
+      integer: ['number', 'integer'],
+      boolean: ['boolean'],
+      array: ['array'],
+      object: ['object'],
+      null: ['null'],
     };
-
-    return compatibilityMap[apiType]?.includes(schemaType) || false;
+    return (map[apiType] ?? []).includes(schemaType);
   }
 
-  private validateConstraints(analysis: FieldAnalysis, value: any, constraints: any) {
-    // Implementation for various constraint validations
-    // This would include all the specific validation logic
+  private validateConstraints(analysis: any, value: any, constraints: any): void {
+    if (constraints.enum && !constraints.enum.includes(value)) {
+      analysis.validationErrors.push(`Value '${value}' not in enum [${constraints.enum.join(', ')}]`);
+    }
+    if (constraints.minLength && typeof value === 'string' && value.length < constraints.minLength) {
+      analysis.validationErrors.push(`String too short (minLength: ${constraints.minLength})`);
+    }
+    if (constraints.maximum !== undefined && typeof value === 'number' && value > constraints.maximum) {
+      analysis.validationErrors.push(`Number too large (max: ${constraints.maximum})`);
+    }
+    if (constraints.pattern && typeof value === 'string' && !new RegExp(constraints.pattern).test(value)) {
+      analysis.validationErrors.push(`String does not match pattern ${constraints.pattern}`);
+    }
   }
 
-  private findSemanticMatches(results: FieldAnalysis[], apiPaths: Map<string, any>, schemaPaths: Map<string, any>) {
-    // Implementation for semantic matching (user_id vs userId, etc.)
+  private findAISuggestion(suggestions: any[], fieldPath: string): string {
+    const item = suggestions.find((s: any) => s.field === fieldPath);
+    return item ? item.recommendation : '';
   }
 
-  private findArrayFields(obj: any, prefix = ''): string[] {
-    // Implementation to find all array fields
-    return [];
-  }
-
-  private findObjectFields(obj: any, prefix = ''): string[] {
-    // Implementation to find all object fields
-    return [];
-  }
-
-  private cleanJsonResponse(response: string): string {
-    return response.replace(/```json\n?|\n?```/g, '').trim();
-  }
-
-  private generateSummaryRecommendation(fieldAnalysis: FieldAnalysis[], constraintValidation: any, aiAnalysis: any): string {
-    // Generate comprehensive summary based on all analysis results
-    return "Comprehensive analysis complete with detailed field-by-field validation and constraint checking.";
+  private cleanJsonResponse(str: string): string {
+    return str.replace(/```json\n?|```/g, '');
   }
 }
