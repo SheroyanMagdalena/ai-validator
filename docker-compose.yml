@@ -56,7 +56,7 @@ services:
     depends_on:
     # - db
     # - mongo
-    - reporthttps://isaahq.slack.com/files/U08R2J26NUF/F09CYTLMV8E/comparison.service.ts?origin_team=T051AR1LXS9&origin_channel=D08R2J2CQ6T
+    - report
     healthcheck:
       test:
       - CMD-SHELL
