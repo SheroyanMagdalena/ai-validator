@@ -270,7 +270,7 @@ export default function HomePage() {
                 {/* Pie Chart */}
                 <div className="p-4 border rounded-xl bg-white dark:bg-gray-900">
                   <h3 className="text-lg font-semibold mb-3">Distribution</h3>
-                  <PieChart
+                  <DonutChart
                     segments={[
                       { label: "Matched", value: matchedFields.length, color: "#22c55e" },
                       { label: "Unresolved", value: unresolvedFields.length, color: "#f59e0b" },
@@ -540,7 +540,7 @@ function ReportOutput({ result }: { result: CompareResult }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = "comparison-report.json";
+  a.download = "comparison-latest.json";
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -699,7 +699,7 @@ function FieldAnalysisSection({ title, fields, status }: {
 }
 
 // Helper: Pie Chart
-function PieChart({ segments }: { segments: { label: string; value: number; color: string }[] }) {
+function DonutChart({ segments }: { segments: { label: string; value: number; color: string }[] }) {
   const total = Math.max(segments.reduce((sum, s) => sum + s.value, 0), 1); // prevent division by zero
 
   // Helper to describe an SVG arc
