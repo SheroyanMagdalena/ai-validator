@@ -530,6 +530,8 @@ function ReportOutput({ result }: { result: CompareResult }) {
   const unresolvedFields = result.fields.filter(f => f.status === 'unresolved');
   const extraFields = result.fields.filter(f => f.status === 'extra');
   const missingFields = result.fields.filter(f => f.status === 'missing');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Download JSON report
   const handleDownloadJson = () => {
@@ -545,9 +547,43 @@ function ReportOutput({ result }: { result: CompareResult }) {
     URL.revokeObjectURL(url);
   };
 
+  // Download PDF report
+  const handleDownloadPdf = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await fetch('http://localhost:3200/render', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(result),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to generate PDF: ${response.statusText}`);
+      }
+
+      // Create a blob from the response and download it
+      const blob = await response.blob();
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'comparison-report.pdf';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      setError(err.message || 'Failed to download PDF');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <>
-      {/* Download Button */}
+      {/* Download Buttons */}
       <div className="flex justify-end mb-6 gap-3">
         <button
           className="px-5 py-2 rounded bg-blue-500 text-white font-medium hover:bg-blue-700 transition"
@@ -555,7 +591,16 @@ function ReportOutput({ result }: { result: CompareResult }) {
         >
           Download JSON Report
         </button>
+        <button
+          className="px-5 py-2 rounded bg-red-500 text-white font-medium hover:bg-red-700 transition"
+          onClick={handleDownloadPdf}
+          disabled={loading}
+        >
+          {loading ? 'Generating PDF...' : 'Download PDF Report'}
+        </button>
       </div>
+      
+      {error && <div className="text-red-600 text-lg mb-4">{error}</div>}
 
       {/* Summary Information */}
       <div className="grid grid-cols-2 gap-4 mb-6">
