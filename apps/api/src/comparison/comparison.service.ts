@@ -26,144 +26,67 @@ export interface ComparisonResult {
   fields: FieldAnalysis[];
 }
 
+interface SchemaField {
+  type?: string;
+  properties?: Record<string, SchemaField>;
+  required?: string[];
+  enum?: any[];
+  minLength?: number;
+  minimum?: number;
+  maximum?: number;
+  pattern?: string;
+  format?: string;
+  [key: string]: any;
+}
+
+interface SchemaObject {
+  properties?: Record<string, SchemaField>;
+  required?: string[];
+  type?: string;
+  [key: string]: any;
+}
+
 @Injectable()
 export class ComparisonService {
   private openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
   async compareWithAI(apiJson: string, modelJson: string): Promise<ComparisonResult> {
     let apiData = this.parseAndValidate(apiJson, 'API');
-    const schemaData = this.parseAndValidate(modelJson, 'Schema');
+    let schemaData = this.parseAndValidate(modelJson, 'Schema');
 
-    // If API schema has oneOf/anyOf, run comparison for each branch and show results for each
-    let results: ComparisonResult[] = [];
-    let branches: number[] = [0];
-    if (apiData && typeof apiData === 'object') {
-      if (Array.isArray(apiData.oneOf)) {
-        branches = apiData.oneOf.map((_, idx) => idx);
-      }
-      if (Array.isArray(apiData.anyOf)) {
-        branches = apiData.anyOf.map((_, idx) => idx);
-      }
-    }
+    // Extract data fields from both API and Schema
+    const apiDataFields = this.extractDataFields(apiData);
+    const schemaDataFields = this.extractDataFields(schemaData);
 
-    for (const idx of branches) {
-      const branchData = this.extractApiDataFields(apiData, idx);
-      const structuralAnalysis = this.analyzeStructure(branchData, schemaData);
-      const rawFieldAnalysis = this.performDeepFieldComparison(branchData, schemaData);
-      const constraintValidation = this.validateSchemaConstraints(branchData, schemaData);
-      const aiAnalysis = await this.getAISemanticAnalysis(rawFieldAnalysis, constraintValidation);
-      const result = this.compileResults(rawFieldAnalysis, constraintValidation, structuralAnalysis, aiAnalysis);
-      result.api_name += branches.length > 1 ? ` (branch ${idx + 1})` : '';
-      results.push(result);
-    }
+    const structuralAnalysis = this.analyzeStructure(apiDataFields, schemaDataFields);
+    const rawFieldAnalysis = this.performDeepFieldComparison(apiDataFields, schemaDataFields);
+    const constraintValidation = this.validateSchemaConstraints(apiDataFields, schemaDataFields);
+    const aiAnalysis = await this.getAISemanticAnalysis(rawFieldAnalysis, constraintValidation);
+    const result = this.compileResults(rawFieldAnalysis, constraintValidation, structuralAnalysis, aiAnalysis);
 
-    // If only one branch, return as usual
-    if (results.length === 1) {
-      console.log('ComparisonService result:', JSON.stringify(results[0], null, 2));
-      return results[0];
-    }
-    // If multiple branches, log all and return the first (or modify to return all if needed)
-    console.log('ComparisonService results:', JSON.stringify(results, null, 2));
-    return results[0];
+    console.log('ComparisonService result:', JSON.stringify(result, null, 2));
+    return result;
   }
-  /**
-   * Extract only the actual data fields from the API JSON, ignoring schema metadata.
-   * If the API JSON contains schema keys (like $schema, title, description, type, properties, required),
-   * return only the fields inside the 'properties' object if present, otherwise return the object as-is.
-   */
-  private extractApiDataFields(apiData: any, oneOfIndex: number = 0): any {
-  const schemaKeys = ['$schema', 'title', 'description', 'type', 'properties', 'required', 'oneOf', 'anyOf', 'allOf'];
-    // Handle oneOf/anyOf/allOf
-    if (Array.isArray(apiData.oneOf)) {
-      const branch = apiData.oneOf[oneOfIndex] || apiData.oneOf[0];
-      return this.extractApiDataFields(branch, oneOfIndex);
-    }
-    if (Array.isArray(apiData.anyOf)) {
-      const branch = apiData.anyOf[oneOfIndex] || apiData.anyOf[0];
-      return this.extractApiDataFields(branch, oneOfIndex);
-    }
-    if (Array.isArray(apiData.allOf)) {
-      // Merge all branches
-      let merged: Record<string, any> = {};
-      for (const branch of apiData.allOf) {
-        const branchFields = this.extractApiDataFields(branch, oneOfIndex);
-        merged = { ...merged, ...branchFields };
-      }
-      return merged;
-    }
-    // If input is OpenAPI/Swagger spec, auto-detect first request/response schema
-    if (apiData.paths && typeof apiData.paths === 'object') {
-      for (const pathKey of Object.keys(apiData.paths)) {
-        const pathObj = apiData.paths[pathKey];
-        for (const methodKey of Object.keys(pathObj)) {
-          const methodObj = pathObj[methodKey];
-          // Prefer requestBody schema
-          if (methodObj.requestBody && methodObj.requestBody.content) {
-            const content = methodObj.requestBody.content;
-            for (const mimeType of Object.keys(content)) {
-              const schema = content[mimeType].schema;
-              if (schema && schema.properties) {
-                return this.extractApiDataFields(schema);
-              }
-            }
-          }
-          // Fallback to response schema
-          if (methodObj.responses && typeof methodObj.responses === 'object') {
-            for (const respKey of Object.keys(methodObj.responses)) {
-              const respObj = methodObj.responses[respKey];
-              if (respObj.content) {
-                for (const mimeType of Object.keys(respObj.content)) {
-                  const schema = respObj.content[mimeType].schema;
-                  if (schema && schema.properties) {
-                    return this.extractApiDataFields(schema);
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-      // If no schema found, return empty object
-      return {};
-    }
 
-    // If it looks like a schema definition, extract only the data fields
-    if (
-      typeof apiData === 'object' &&
-      apiData !== null &&
-      Object.keys(apiData).some(key => schemaKeys.includes(key))
-    ) {
-      // If 'properties' exists, flatten it to top-level fields
-      if (apiData.properties && typeof apiData.properties === 'object') {
-        const flat: Record<string, any> = {};
-        for (const [key, value] of Object.entries(apiData.properties)) {
-          if (typeof value === 'object' && value !== null) {
-            if ('default' in value) flat[key] = value.default;
-            else if ('example' in value) flat[key] = value.example;
-            else if ('type' in value) {
-              switch (value.type) {
-                case 'string': flat[key] = 'sample'; break;
-                case 'number': flat[key] = 0; break;
-                case 'integer': flat[key] = 0; break;
-                case 'boolean': flat[key] = false; break;
-                case 'array': flat[key] = []; break;
-                case 'object': flat[key] = {}; break;
-                default: flat[key] = null;
-              }
-            } else {
-              flat[key] = null;
-            }
-          } else {
-            flat[key] = value;
-          }
-        }
-        return flat;
-      }
-      // Otherwise, return an empty object (no data fields found)
+  /**
+   * Extract data fields from JSON, handling both schema definitions and actual data
+   */
+  private extractDataFields(data: any): any {
+    const schemaKeys = ['$schema', 'title', 'description', 'type', 'properties', 'required', 'oneOf', 'anyOf', 'allOf'];
+    
+    // If it's a schema definition with properties, return the properties object
+    if (data && typeof data === 'object' && data.properties && typeof data.properties === 'object') {
+      return data.properties;
+    }
+    
+    // If it has schema-like keys but no properties, return empty object
+    if (data && typeof data === 'object' && 
+        Object.keys(data).some(key => schemaKeys.includes(key))) {
       return {};
     }
-    // If not a schema definition, return as-is
-    return apiData;
+    
+    // Otherwise, return the data as-is (actual data structure)
+    return data;
   }
 
   private parseAndValidate(jsonString: string, type: string): any {
@@ -227,10 +150,14 @@ export class ComparisonService {
   private validateFieldMatch(analysis: any, apiField: any, schemaField: any): void {
     if (!apiField && schemaField?.required) {
       analysis.validationErrors.push(`Field '${analysis.path}' is required but missing`);
+      analysis.confidence = 0.3;
     }
+    
     if (apiField && !schemaField) {
       analysis.validationErrors.push(`Field '${analysis.path}' is extra in API response`);
+      analysis.confidence = 0.5;
     }
+    
     if (!apiField || !schemaField) return;
 
     if (analysis.apiType && analysis.schemaType) {
@@ -238,6 +165,7 @@ export class ComparisonService {
         analysis.validationErrors.push(
           `Type mismatch for '${analysis.path}': expected ${analysis.schemaType}, got ${analysis.apiType}`
         );
+        analysis.confidence = 0.7;
       }
     }
 
@@ -250,16 +178,18 @@ export class ComparisonService {
     const violations: string[] = [];
     const validatedFields: string[] = [];
     
-    if (Array.isArray(schemaData.required)) {
-      for (const field of schemaData.required) {
+    // If schemaData is a schema definition, check required fields
+    if (schemaData && typeof schemaData === 'object' && Array.isArray((schemaData as SchemaObject).required)) {
+      for (const field of (schemaData as SchemaObject).required!) {
         if (!(field in apiData)) {
           violations.push(`Required field '${field}' is missing`);
         }
       }
     }
     
-    if (schemaData.properties && typeof schemaData.properties === 'object') {
-      const props = schemaData.properties as Record<string, any>;
+    // Validate individual field constraints if schema has properties
+    if (schemaData && typeof schemaData === 'object' && (schemaData as SchemaObject).properties) {
+      const props = (schemaData as SchemaObject).properties!;
       for (const [fname, fSchema] of Object.entries(props)) {
         validatedFields.push(fname);
         const val = apiData[fname];
@@ -325,7 +255,6 @@ Return ONLY a valid JSON object with a "suggestions" array containing objects wi
       const content = resp.choices[0].message?.content ?? '{}';
       const parsed = JSON.parse(this.cleanJsonResponse(content));
       
-      // Ensure the response has a suggestions array
       return {
         suggestions: Array.isArray(parsed.suggestions) ? parsed.suggestions : []
       };
@@ -369,11 +298,11 @@ Return ONLY a valid JSON object with a "suggestions" array containing objects wi
       api_name: 'API Comparison',
       validation_date: new Date().toISOString(),
       total_fields_compared: fields.length,
-  matched_fields: matched,
-  unmatched_fields: unresolved,
-  extra_fields: extra,
-  missing_fields: missing,
-  accuracy_score: fields.length ? Math.round((matched / fields.length) * 100) : 0,
+      matched_fields: matched,
+      unmatched_fields: unresolved,
+      extra_fields: extra,
+      missing_fields: missing,
+      accuracy_score: fields.length ? Math.round((matched / fields.length) * 100) : 0,
       fields,
     };
   }
@@ -390,11 +319,16 @@ Return ONLY a valid JSON object with a "suggestions" array containing objects wi
 
   private getAllFieldPaths(obj: any, prefix = ''): Map<string, { value: any; type: string }> {
     const map = new Map<string, any>();
+    
     if (obj && typeof obj === 'object') {
       for (const [k, v] of Object.entries(obj)) {
         const path = prefix ? `${prefix}.${k}` : k;
-        map.set(path, { value: v, type: this.detectFormatType(v) });
-        if (v && typeof v === 'object') {
+        
+        // Only add leaf nodes (non-object, non-array values) to avoid double-counting
+        if (v === null || typeof v !== 'object' || Array.isArray(v)) {
+          map.set(path, { value: v, type: this.detectFormatType(v) });
+        } else if (typeof v === 'object' && v !== null) {
+          // For objects, recursively process but don't add the object itself as a field
           this.getAllFieldPaths(v, path).forEach((info, p) => map.set(p, info));
         }
       }
@@ -404,18 +338,36 @@ Return ONLY a valid JSON object with a "suggestions" array containing objects wi
 
   private getAllSchemaFieldPaths(schema: any, prefix = ''): Map<string, { type?: string; constraints?: any; required?: boolean }> {
     const map = new Map<string, any>();
-    if (schema?.properties && typeof schema.properties === 'object') {
-      const props = schema.properties as Record<string, any>;
-      for (const key of Object.keys(props)) {
-        const s = props[key];
-        const path = prefix ? `${prefix}.${key}` : key;
-        map.set(path, {
-          type: s.type,
-          constraints: s,
-          required: Array.isArray(schema.required) && schema.required.includes(key),
-        });
-        if (s.type === 'object') {
-          this.getAllSchemaFieldPaths(s, path).forEach((info, p) => map.set(p, info));
+    
+    if (schema && typeof schema === 'object') {
+      for (const [k, v] of Object.entries(schema)) {
+        const path = prefix ? `${prefix}.${k}` : k;
+        
+        if (v && typeof v === 'object') {
+          // Use type assertions to access the properties safely
+          const schemaField = v as SchemaField;
+          
+          if (schemaField.type && schemaField.type !== 'object') {
+            map.set(path, {
+              type: schemaField.type,
+              constraints: schemaField,
+              required: Array.isArray((schema as SchemaObject).required) && 
+                       (schema as SchemaObject).required!.includes(k),
+            });
+          } else if (schemaField.type === 'object' && schemaField.properties) {
+            // For nested objects, process recursively
+            this.getAllSchemaFieldPaths(schemaField.properties, path).forEach((info, p) => map.set(p, info));
+          } else {
+            // For regular objects without schema info, treat as data
+            this.getAllSchemaFieldPaths(v, path).forEach((info, p) => map.set(p, info));
+          }
+        } else {
+          // For primitive values
+          map.set(path, {
+            type: typeof v,
+            constraints: {},
+            required: false,
+          });
         }
       }
     }
@@ -427,6 +379,7 @@ Return ONLY a valid JSON object with a "suggestions" array containing objects wi
     if (Array.isArray(value)) return 'array';
     if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}T/.test(value)) return 'datetime';
     if (typeof value === 'string' && /^[a-f0-9-]{36}$/i.test(value)) return 'uuid';
+    if (typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)) return 'date';
     return typeof value;
   }
 
@@ -440,30 +393,39 @@ Return ONLY a valid JSON object with a "suggestions" array containing objects wi
   }
 
   private areTypesCompatible(apiType: string, schemaType: string): boolean {
-    const map: Record<string, string[]> = {
-      string: ['string', 'datetime', 'uuid'],
-      number: ['number', 'integer'],
+    const compatibilityMap: Record<string, string[]> = {
+      string: ['string', 'datetime', 'uuid', 'date', 'date-time'],
+      number: ['number', 'integer', 'float'],
       integer: ['number', 'integer'],
       boolean: ['boolean'],
       array: ['array'],
       object: ['object'],
       null: ['null'],
     };
-    return (map[apiType] ?? []).includes(schemaType);
+    
+    // Allow any type to match if schema type is not specified
+    if (!schemaType) return true;
+    if (!apiType) return true;
+    
+    return (compatibilityMap[apiType] || []).includes(schemaType) || 
+           (compatibilityMap[schemaType] || []).includes(apiType) ||
+           apiType === schemaType;
   }
 
   private validateConstraints(analysis: any, value: any, constraints: any): void {
-    if (constraints.enum && !constraints.enum.includes(value)) {
-      analysis.validationErrors.push(`Value '${value}' not in enum [${constraints.enum.join(', ')}]`);
+    const constraint = constraints as SchemaField;
+    
+    if (constraint.enum && Array.isArray(constraint.enum) && !constraint.enum.includes(value)) {
+      analysis.validationErrors.push(`Value '${value}' not in enum [${constraint.enum.join(', ')}]`);
     }
-    if (constraints.minLength && typeof value === 'string' && value.length < constraints.minLength) {
-      analysis.validationErrors.push(`String too short (minLength: ${constraints.minLength})`);
+    if (constraint.minLength && typeof value === 'string' && value.length < constraint.minLength) {
+      analysis.validationErrors.push(`String too short (minLength: ${constraint.minLength})`);
     }
-    if (constraints.maximum !== undefined && typeof value === 'number' && value > constraints.maximum) {
-      analysis.validationErrors.push(`Number too large (max: ${constraints.maximum})`);
+    if (constraint.maximum !== undefined && typeof value === 'number' && value > constraint.maximum) {
+      analysis.validationErrors.push(`Number too large (max: ${constraint.maximum})`);
     }
-    if (constraints.pattern && typeof value === 'string' && !new RegExp(constraints.pattern).test(value)) {
-      analysis.validationErrors.push(`String does not match pattern ${constraints.pattern}`);
+    if (constraint.pattern && typeof value === 'string' && !new RegExp(constraint.pattern).test(value)) {
+      analysis.validationErrors.push(`String does not match pattern ${constraint.pattern}`);
     }
   }
 
