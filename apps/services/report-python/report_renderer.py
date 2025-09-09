@@ -1,6 +1,7 @@
 from datetime import datetime
 from io import BytesIO
 from typing import Dict
+import math
 
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, LongTable
@@ -13,7 +14,6 @@ from reportlab.graphics.charts.barcharts import VerticalBarChart
 from reportlab.graphics.charts.textlabels import Label
 from reportlab.lib.units import inch
 from reportlab.lib.enums import TA_LEFT
-import math
 
 
 def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report") -> bytes:
@@ -165,47 +165,91 @@ def generate_pdf_bytes(data: Dict, title_fallback: str = "API Validation Report"
         if category_fields:
             elements.append(Paragraph(title, styles['SectionHeading']))
 
-            table_data = [[
-                Paragraph("<b>Field</b>", wrap_style),
-                Paragraph("<b>Issue</b>", wrap_style),
-                Paragraph("<b>Expected</b>", wrap_style),
-                Paragraph("<b>Actual</b>", wrap_style),
-                Paragraph("<b>Suggestion</b>", wrap_style)
-            ]]
+            # Different table structure for extra fields vs others
+            if status_key == "extra" or "extra" in status_key.lower():
+                # Extra fields: Field, Type, Description columns
+                table_data = [[
+                    Paragraph("<b>Field</b>", wrap_style),
+                    Paragraph("<b>Type</b>", wrap_style),
+                    Paragraph("<b>Description</b>", wrap_style)
+                ]]
 
-            for field in category_fields:
-                confidence = field.get("confidence")
-                conf_text = f" ({confidence}%)" if confidence else ""
-                table_data.append([
-                    Paragraph(f"<b>{field.get('field_name','')}</b>{conf_text}", wrap_style),
-                    Paragraph(field.get('issue','') or "—", wrap_style),
-                    Paragraph(f"{field.get('expected_type','')} {field.get('expected_format','')}", wrap_style),
-                    Paragraph(f"{field.get('actual_type','')} {field.get('actual_format','')}", wrap_style),
-                    Paragraph(field.get('suggestion','') or "—", wrap_style)
-                ])
+                for field in category_fields:
+                    confidence = field.get("confidence")
+                    conf_text = f" ({confidence}%)" if confidence else ""
+                    actual_info = f"{field.get('actual_type','')} {field.get('actual_format','')}"
+                    if not actual_info.strip():
+                        actual_info = field.get('type', '') or field.get('format', '') or "Unknown"
+                    
+                    description = field.get('suggestion','') or field.get('issue','') or field.get('description','') or "Additional field found in API response"
+                    
+                    table_data.append([
+                        Paragraph(f"<b>{field.get('field_name','')}</b>{conf_text}", wrap_style),
+                        Paragraph(actual_info.strip(), wrap_style),
+                        Paragraph(description, wrap_style)
+                    ])
 
-            col_widths = [usable_width*0.18, usable_width*0.24, usable_width*0.16, usable_width*0.16, usable_width*0.26]
-            field_table = LongTable(table_data, colWidths=col_widths, repeatRows=1, splitByRow=1)
-            field_table.setStyle(TableStyle([
-                ('BACKGROUND', (0,0), (-1,0), colors.HexColor("#003366")),
-                ('TEXTCOLOR', (0,0), (-1,0), colors.whitesmoke),
-                ('FONTNAME', (0,0), (-1,0), "Helvetica-Bold"),
-                ('FONTSIZE', (0,0), (-1,0), 8),
-                ('ALIGN', (0,0), (-1,0), "CENTER"),
-                ('BOTTOMPADDING', (0,0), (-1,0), 6),
-                ('BACKGROUND', (0,1), (-1,-1), color),
-                ('VALIGN', (0,0), (-1,-1), 'TOP'),
-                ('LEFTPADDING', (0,0), (-1,-1), 2),
-                ('RIGHTPADDING', (0,0), (-1,-1), 2),
-                ('TOPPADDING', (0,0), (-1,-1), 2),
-                ('BOTTOMPADDING', (0,0), (-1,-1), 2),
-                ('FONTSIZE', (0,1), (-1,-1), 7),
-                ('WORDWRAP', (0,0), (-1,-1), 'LTR'),
-                ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
-            ]))
+                # Column widths for extra fields table
+                col_widths = [
+                    usable_width * 0.25,  # Field
+                    usable_width * 0.25,  # Type
+                    usable_width * 0.50   # Description
+                ]
+            else:
+                # Regular fields: Field, Issue, Expected, Actual, Suggestion columns
+                table_data = [[
+                    Paragraph("<b>Field</b>", wrap_style),
+                    Paragraph("<b>Issue</b>", wrap_style),
+                    Paragraph("<b>Expected</b>", wrap_style),
+                    Paragraph("<b>Actual</b>", wrap_style),
+                    Paragraph("<b>Suggestion</b>", wrap_style)
+                ]]
 
+                for field in category_fields:
+                    confidence = field.get("confidence")
+                    conf_text = f" ({confidence}%)" if confidence else ""
+                    table_data.append([
+                        Paragraph(f"<b>{field.get('field_name','')}</b>{conf_text}", wrap_style),
+                        Paragraph(field.get('issue','') or "—", wrap_style),
+                        Paragraph(f"{field.get('expected_type','')} {field.get('expected_format','')}", wrap_style),
+                        Paragraph(f"{field.get('actual_type','')} {field.get('actual_format','')}", wrap_style),
+                        Paragraph(field.get('suggestion','') or "—", wrap_style)
+                    ])
+
+                # Column widths for regular fields table
+                col_widths = [
+                    usable_width * 0.20,  # Field
+                    usable_width * 0.20,  # Issue
+                    usable_width * 0.18,  # Expected
+                    usable_width * 0.18,  # Actual
+                    usable_width * 0.24   # Suggestion
+                ]
+
+            table_style = TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor("#4f81bd")),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+                ('FONTNAME', (0, 0), (-1, 0), "Helvetica-Bold"),
+                ('FONTSIZE', (0, 0), (-1, 0), 9),
+                ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
+                ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+                ('LEFTPADDING', (0, 0), (-1, -1), 3),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 3),
+                ('TOPPADDING', (0, 0), (-1, -1), 3),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+                ('GRID', (0, 0), (-1, -1), 0.3, colors.lightgrey),
+                ('WORDWRAP', (0,0), (-1,-1), 'CJK'),
+            ])
+
+            # Create table with proper column widths
+            field_table = LongTable(
+                table_data, 
+                colWidths=col_widths, 
+                repeatRows=1, 
+                style=table_style, 
+                splitByRow=1
+            )
             elements.append(field_table)
-            elements.append(Spacer(1, 10))
+            elements.append(Spacer(1, 8))
 
     # Recommendation
     recommendation = data.get("summary_recommendation", "No specific recommendations provided.")
