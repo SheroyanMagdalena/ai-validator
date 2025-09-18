@@ -62,7 +62,7 @@ export class ComparisonService {
     const rawFieldAnalysis = this.performDeepFieldComparison(apiSchemas, modelProperties);
     const constraintValidation = this.validateSchemaConstraints(apiSchemas, modelProperties);
     const aiAnalysis = await this.getAISemanticAnalysis(rawFieldAnalysis, constraintValidation, apiSchemas, modelProperties);
-    const result = this.compileResults(rawFieldAnalysis, constraintValidation, structuralAnalysis, aiAnalysis);
+    const result = this.compileResults(rawFieldAnalysis, constraintValidation, structuralAnalysis, aiAnalysis, apiSchemas, modelProperties);
 
     console.log('ComparisonService result:', JSON.stringify(result, null, 2));
     return result;
@@ -75,7 +75,7 @@ export class ComparisonService {
     if (apiData && apiData.components && apiData.components.schemas) {
       return apiData.components.schemas;
     }
-    return {};
+    return apiData; // Return the entire API data if no components.schemas found
   }
 
   /**
@@ -85,7 +85,7 @@ export class ComparisonService {
     if (modelData && modelData.properties) {
       return modelData.properties;
     }
-    return {};
+    return modelData; // Return the entire model data if no properties found
   }
 
   private parseAndValidate(jsonString: string, type: string): any {
@@ -120,6 +120,8 @@ export class ComparisonService {
 
   private performDeepFieldComparison(apiData: any, schemaData: any): any[] {
     const results: any[] = [];
+    
+    // Get all field paths from both API and schema
     const apiPaths = this.getAllSchemaFieldPaths(apiData);
     const schemaPaths = this.getAllSchemaFieldPaths(schemaData);
     const allPaths = new Set([...apiPaths.keys(), ...schemaPaths.keys()]);
@@ -147,18 +149,23 @@ export class ComparisonService {
   }
 
   private validateFieldMatch(analysis: any, apiField: any, schemaField: any): void {
-    if (!apiField && schemaField?.required) {
-      analysis.validationErrors.push(`Field '${analysis.path}' is required but missing`);
-      analysis.confidence = 0.3;
-    }
-    
+    // Field exists in API but not in schema = extra
     if (apiField && !schemaField) {
       analysis.validationErrors.push(`Field '${analysis.path}' is extra in API response`);
       analysis.confidence = 0.5;
+      return;
     }
     
-    if (!apiField || !schemaField) return;
-
+    // Field exists in schema but not in API = missing (if required)
+    if (!apiField && schemaField) {
+      if (schemaField.required) {
+        analysis.validationErrors.push(`Field '${analysis.path}' is required but missing`);
+        analysis.confidence = 0.3;
+      }
+      return;
+    }
+    
+    // Both fields exist, check type compatibility
     if (analysis.apiType && analysis.schemaType) {
       if (!this.areTypesCompatible(analysis.apiType, analysis.schemaType)) {
         analysis.validationErrors.push(
@@ -168,7 +175,8 @@ export class ComparisonService {
       }
     }
 
-    if (schemaField.constraints) {
+    // Validate constraints if they exist
+    if (schemaField.constraints && apiField.value !== undefined) {
       this.validateConstraints(analysis, apiField.value, schemaField.constraints);
     }
   }
@@ -277,13 +285,23 @@ You MUST return ONLY a valid JSON object with the following structure. Do not ad
     raw: any[],
     constraints: { violations: string[]; validatedFields: string[] },
     structure: any,
-    ai: any
+    ai: any,
+    apiSchemas: any,
+    modelProperties: any
   ): ComparisonResult {
     const fields: FieldAnalysis[] = raw.map(f => {
-      const status = !f.apiType && f.isRequired ? 'missing'
-                    : f.apiType && !f.schemaType ? 'extra'
-                    : f.validationErrors.length ? 'unresolved'
-                    : 'matched';
+      // Determine status based on field presence and validation errors
+      let status: FieldAnalysis['status'];
+      
+      if (!f.apiType && f.schemaType) {
+        status = f.isRequired ? 'missing' : 'unresolved';
+      } else if (f.apiType && !f.schemaType) {
+        status = 'extra';
+      } else if (f.validationErrors.length > 0) {
+        status = 'unresolved';
+      } else {
+        status = 'matched';
+      }
 
       // Find AI suggestion for this field
       const aiSuggestion = ai?.suggestions?.find((s: any) => s.field === f.path);
@@ -306,26 +324,17 @@ You MUST return ONLY a valid JSON object with the following structure. Do not ad
     const unresolved = fields.filter(x => x.status === 'unresolved').length;
     const extra = fields.filter(x => x.status === 'extra').length;
     const missing = fields.filter(x => x.status === 'missing').length;
-
-    // Use AI summary if available, otherwise calculate from fields
-    const summary = ai?.summary || {
-      total_fields_compared: fields.length,
-      matched_count: matched,
-      unresolved_count: unresolved,
-      api_only_count: extra,
-      model_only_count: missing
-    };
+    const total = fields.length;
 
     return {
       api_name: 'API Comparison',
       validation_date: new Date().toISOString(),
-      total_fields_compared: summary.total_fields_compared,
-      matched_fields: summary.matched_count,
-      unmatched_fields: summary.unresolved_count,
-      extra_fields: summary.api_only_count,
-      missing_fields: summary.model_only_count,
-      accuracy_score: summary.total_fields_compared ? 
-        Math.round((summary.matched_count / summary.total_fields_compared) * 100) : 0,
+      total_fields_compared: total,
+      matched_fields: matched,
+      unmatched_fields: unresolved,
+      extra_fields: extra,
+      missing_fields: missing,
+      accuracy_score: total ? Math.round((matched / total) * 100) : 0,
       fields,
     };
   }
@@ -334,47 +343,73 @@ You MUST return ONLY a valid JSON object with the following structure. Do not ad
 
   private calculateNestingDepth(obj: Record<string, any>, depth = 0): number {
     if (typeof obj !== 'object' || obj === null) return depth;
-    return Object.values(obj).reduce((max, v: any) =>
-      Math.max(max, this.calculateNestingDepth(v, depth + 1)),
-      depth
-    );
+    
+    let maxDepth = depth;
+    for (const value of Object.values(obj)) {
+      if (typeof value === 'object' && value !== null) {
+        const currentDepth = this.calculateNestingDepth(value, depth + 1);
+        maxDepth = Math.max(maxDepth, currentDepth);
+      }
+    }
+    return maxDepth;
   }
 
-  private getAllSchemaFieldPaths(schema: any, prefix = ''): Map<string, { type?: string; constraints?: any; required?: boolean; value?: any }> {
+  private getAllSchemaFieldPaths(schema: any, prefix = '', required = false): Map<string, { type?: string; constraints?: any; required?: boolean; value?: any }> {
     const map = new Map<string, any>();
     
     if (schema && typeof schema === 'object') {
       for (const [k, v] of Object.entries(schema)) {
         const path = prefix ? `${prefix}.${k}` : k;
+        const fieldValue = v as any;
         
-        if (v && typeof v === 'object') {
-          const schemaField = v as SchemaField;
-          
-          if (schemaField.type && schemaField.type !== 'object') {
-            map.set(path, {
-              type: schemaField.type,
-              constraints: schemaField,
-              required: false,
-              value: undefined
-            });
-          } else if (schemaField.type === 'object' && schemaField.properties) {
-            this.getAllSchemaFieldPaths(schemaField.properties, path).forEach((info, p) => map.set(p, info));
-          } else if (schemaField.properties) {
-            this.getAllSchemaFieldPaths(schemaField.properties, path).forEach((info, p) => map.set(p, info));
-          } else {
+        if (fieldValue && typeof fieldValue === 'object') {
+          // Handle nested objects and arrays
+          if (fieldValue.type === 'object' && fieldValue.properties) {
+            // Object with properties
+            const isRequired = Array.isArray(fieldValue.required) && fieldValue.required.includes(k);
             map.set(path, {
               type: 'object',
-              constraints: {},
-              required: false,
-              value: v
+              constraints: fieldValue,
+              required: isRequired,
+              value: undefined
+            });
+            this.getAllSchemaFieldPaths(fieldValue.properties, path, isRequired).forEach((info, p) => map.set(p, info));
+          } else if (fieldValue.type === 'array' && fieldValue.items) {
+            // Array type
+            map.set(path, {
+              type: 'array',
+              constraints: fieldValue,
+              required: required,
+              value: undefined
+            });
+            this.getAllSchemaFieldPaths(fieldValue.items, path, required).forEach((info, p) => map.set(p, info));
+          } else if (fieldValue.properties) {
+            // Object with properties but no explicit type
+            const isRequired = Array.isArray(fieldValue.required) && fieldValue.required.includes(k);
+            map.set(path, {
+              type: 'object',
+              constraints: fieldValue,
+              required: isRequired,
+              value: undefined
+            });
+            this.getAllSchemaFieldPaths(fieldValue.properties, path, isRequired).forEach((info, p) => map.set(p, info));
+          } else {
+            // Simple field with type
+            const fieldType = fieldValue.type || typeof fieldValue;
+            map.set(path, {
+              type: fieldType,
+              constraints: fieldValue,
+              required: required,
+              value: fieldValue
             });
           }
         } else {
+          // Primitive value
           map.set(path, {
-            type: typeof v,
+            type: typeof fieldValue,
             constraints: {},
-            required: false,
-            value: v
+            required: required,
+            value: fieldValue
           });
         }
       }
@@ -402,8 +437,7 @@ You MUST return ONLY a valid JSON object with the following structure. Do not ad
       null: ['null'],
     };
     
-    if (!schemaType) return true;
-    if (!apiType) return true;
+    if (!schemaType || !apiType) return true;
     
     return (compatibilityMap[apiType] || []).includes(schemaType) || 
            (compatibilityMap[schemaType] || []).includes(apiType) ||
@@ -425,14 +459,6 @@ You MUST return ONLY a valid JSON object with the following structure. Do not ad
     if (constraint.pattern && typeof value === 'string' && !new RegExp(constraint.pattern).test(value)) {
       analysis.validationErrors.push(`String does not match pattern ${constraint.pattern}`);
     }
-  }
-
-  private findAISuggestion(suggestions: any[] | undefined, fieldPath: string): string {
-    if (!suggestions || !Array.isArray(suggestions)) {
-      return '';
-    }
-    const item = suggestions.find((s: any) => s.field === fieldPath);
-    return item ? item.recommendation : '';
   }
 
   private cleanJsonResponse(str: string): string {
