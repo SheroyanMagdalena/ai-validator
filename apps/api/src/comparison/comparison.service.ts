@@ -231,19 +231,27 @@ You are an AI Validation Engine specialized in comparing an API's data structure
 Here is the input data structured according to your requirements:
 
 \`\`\`json
-${JSON.stringify(aiInput, null, 2)}
+${JSON.stringify({ api: { components: { schemas: apiSchemas } }, dataModel: { properties: modelProperties } }, null, 2)}
 \`\`\`
 
 ### Core Directive: Field Mapping
-Your primary task is to use the \`x-system-mappings\` property within the \`dataModel\` to find the correct field names for comparison. For each property in the \`dataModel\`:
-1. Find its \`x-system-mappings\` object.
-2. Identify the correct system code (e.g., \`"SPR"\` for this API).
-3. Extract the field name(s) from the mapping value (e.g., \`"Anun"\` for \`"firstName"\`).
-4. Locate this mapped field name within the relevant API schema.
+Use the \`x-system-mappings\` inside \`dataModel.properties\` to find the correct API field names:
+1) For each model property, read its \`x-system-mappings\`.
+2) Select the mapping for the current system code (e.g., "SPR").
+3) Extract the mapped field name(s) (e.g., "PSN", "Anun").
+4) Find the corresponding field in the API schemas.
 
-### Validation Results for Analysis:
+### **Flattened Field Name Resolution (VERY IMPORTANT)**
+- **Always output the field name as the *leaf key only*** (the flat name), never with parent prefixes.
+  - Examples:
+    - \`Person.PSN\` → **\`PSN\`**
+    - \`Person.Address.street\` → **\`Address.street\`**
+- Treat any schema/container names (keys under \`components.schemas\`) and intermediate object names as **non-outputtable** context.
+- If two different branches share the same leaf key, choose the one that matches the mapping context; if still ambiguous, include the full dotted path **only** in a separate metadata property (\`mapped_api_field_path\`), but keep \`field\` and \`mapped_api_field\` as the **leaf**.
+- Never return values like \`Person.PSN\` or \`Address.street\` in the \`field\` or \`mapped_api_field\`—only the leaf (e.g., \`PSN\`, \`street\`).
 
-Field Analysis (up to 20 entries):
+### Validation Results for Analysis
+Field Analysis (sample up to 20):
 ${JSON.stringify(raw.slice(0, 20), null, 2)}
 
 Constraint Violations:
@@ -251,6 +259,7 @@ ${JSON.stringify(constraints.violations || [], null, 2)}
 
 ### Output Format
 You MUST return ONLY a valid JSON object with the following structure. Do not add any other text or commentary.
+
 
 `;
 
