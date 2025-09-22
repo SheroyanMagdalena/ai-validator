@@ -43,16 +43,6 @@ export class ComparisonController {
   health() {
     return { ok: true, service: 'comparison', ts: new Date().toISOString() };
   }
-
-  /**
-   * JSON → JSON
-   * Body:
-   * {
-   *   "apiDoc": {...},
-   *   "modelSchema": {...},
-   *   "options": { "fuzzyThreshold": 0.76, "aiHints": false }
-   * }
-   */
   @Post('compare')
   async compare(@Body() body: CompareRequestDto) {
     if (!body || typeof body !== 'object') {
@@ -63,25 +53,12 @@ export class ComparisonController {
     const options: CompareOptions = body.options ?? {};
     return this.service.compare(apiDoc, modelSchema, options);
   }
-
-  /**
-   * Multipart upload (alias 1): POST /comparison/compare/files
-   * Files:
-   *  - api   : OpenAPI doc (JSON/YAML)
-   *  - model : Model schema (JSON/YAML)
-   * Optional text field "options" = JSON string.
-   */
   @Post('compare/files')
   @UseInterceptors(AnyFilesInterceptor())
   async compareFiles(@UploadedFiles() files: Array<Express.Multer.File>, @Body() body: any) {
     const { apiDoc, modelSchema, options } = this.parseUpload(files, body);
     return this.service.compare(apiDoc, modelSchema, options);
   }
-
-  /**
-   * Multipart upload (alias 2): POST /comparison/upload
-   * Same contract as /comparison/compare/files (kept for compatibility).
-   */
   @Post('upload')
   @UseInterceptors(AnyFilesInterceptor())
   async upload(@UploadedFiles() files: Array<Express.Multer.File>, @Body() body: any) {
