@@ -123,7 +123,7 @@ export class ComparisonService {
     const missing = modelFields.length - matchedModelPaths.size;
     const matched = matches.length;
     const total = matched + extra + missing;
-    const accuracy = total === 0 ? 1 : matched / total;
+    const accuracy = total === 0 ? 1 : matched / total * 100;
 
     // Sort for stable output: matched (desc score), then extra, then missing
     fields.sort((a, b) => {
