@@ -2,6 +2,7 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
   Post,
   UploadedFiles,
@@ -10,6 +11,8 @@ import {
 import { AnyFilesInterceptor } from '@nestjs/platform-express';
 import { ComparisonService } from './comparison.service';
 import { CompareOptions } from './types';
+import { CacheService } from '../cache/cache.service';
+import { PerformanceService } from '../cache/performance.service';
 import * as yaml from 'js-yaml';
 
 /** Simple DTO (kept lean for copy-paste) */
@@ -37,11 +40,60 @@ function parseTextToObject(buf: Buffer, label: string): any {
 
 @Controller('comparison')
 export class ComparisonController {
-  constructor(private readonly service: ComparisonService) {}
+  constructor(
+    private readonly service: ComparisonService,
+    private readonly cacheService: CacheService,
+    private readonly performanceService: PerformanceService,
+  ) {}
 
   @Get('health')
   health() {
     return { ok: true, service: 'comparison', ts: new Date().toISOString() };
+  }
+
+  @Get('cache/stats')
+  async getCacheStats() {
+    const stats = await this.cacheService.getStats();
+    return {
+      stats: stats || { message: 'Cache statistics not available' },
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Delete('cache')
+  async clearCache() {
+    await this.cacheService.clearAll();
+    return {
+      message: 'Cache cleared successfully',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('performance/metrics')
+  async getPerformanceMetrics() {
+    const metrics = this.performanceService.getMetrics();
+    return {
+      ...metrics,
+      cacheHitRate: this.performanceService.getCacheHitRate(),
+    };
+  }
+
+  @Post('performance/reset')
+  async resetPerformanceMetrics() {
+    this.performanceService.reset();
+    return {
+      message: 'Performance metrics reset successfully',
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  @Get('performance/summary')
+  async getPerformanceSummary() {
+    this.performanceService.logSummary();
+    return {
+      message: 'Performance summary logged to console',
+      timestamp: new Date().toISOString(),
+    };
   }
   @Post('compare')
   async compare(@Body() body: CompareRequestDto) {

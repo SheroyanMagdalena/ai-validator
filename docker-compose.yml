@@ -17,6 +17,19 @@ services:
 #     - 27017:27017
 #     volumes:
 #     - mongo-data:/data/db
+  redis:
+    image: redis:7-alpine
+    container_name: ai-validator-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
   report:
     build:
       context: ./apps/services/report-python
@@ -47,6 +60,9 @@ services:
     environment:
       PORT: '3100'
       WEB_ORIGIN: http://localhost:3000
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      NODE_ENV: production
       # DATABASE_URL: postgres://user:pass@db:5432/ai_db
       # MONGO_URL: mongodb://mongo:27017/pdfstore
       REPORT_SERVICE_URL: http://report:3200
@@ -56,6 +72,7 @@ services:
     depends_on:
     # - db
     # - mongo
+    - redis
     - report
     healthcheck:
       test:
@@ -115,3 +132,6 @@ services:
 # volumes:
 #   db-data: null
 #   mongo-data: null
+
+volumes:
+  redis-data:

@@ -5,9 +5,16 @@ import { flattenModelToLeafMap } from './modelFlatten';
 import { normalizeForEquality, toCoreTokensFromName } from './normalization';
 import { scorePair } from './semanticMatcher';
 import { AiHintsProvider } from './aiHints';
+import { CacheService } from '../cache/cache.service';
+import { PerformanceService } from '../cache/performance.service';
 
 @Injectable()
 export class ComparisonService {
+  constructor(
+    private cacheService: CacheService,
+    private performanceService: PerformanceService,
+  ) {}
+
   /**
    * Public entry: compare OpenAPI spec to data model and produce human-aligned mapping with reasoning.
    * Two chained steps:
@@ -15,19 +22,47 @@ export class ComparisonService {
    *  2) Semantic fuzzy matching (Jaro-Winkler + tokens + type/date biases)
    */
   async compare(apiDoc: any, modelSchema: any, options: CompareOptions = {}): Promise<CompareResult> {
+    const startTime = Date.now();
+    
+    // Check cache for complete comparison result first
+    const cachedResult = await this.cacheService.getComparisonResult(apiDoc, modelSchema, options);
+    if (cachedResult) {
+      this.performanceService.recordCacheHit();
+      const executionTime = Date.now() - startTime;
+      this.performanceService.recordComparison(executionTime);
+      return cachedResult;
+    }
+
+    this.performanceService.recordCacheMiss();
+
     const fuzzyThreshold = options.fuzzyThreshold ?? 0.76;
     const ai = new AiHintsProvider(!!options.aiHints, options.aiConfig);
 
-    const apiMap = this.flattenOpenApiToLeafMap(apiDoc);
-    const modelMap = this.flattenModelToLeafMap(modelSchema);
+    // Try to get flattened structures from cache
+    let apiMap = await this.cacheService.getFlattenedApi(apiDoc);
+    if (!apiMap) {
+      apiMap = this.flattenOpenApiToLeafMap(apiDoc);
+      await this.cacheService.cacheFlattenedApi(apiDoc, apiMap);
+    }
+
+    let modelMap = await this.cacheService.getFlattenedModel(modelSchema);
+    if (!modelMap) {
+      modelMap = this.flattenModelToLeafMap(modelSchema);
+      await this.cacheService.cacheFlattenedModel(modelSchema, modelMap);
+    }
 
     const apiFields = [...apiMap.values()];
     const modelFields = [...modelMap.values()];
 
-    // === Step 0: Optional AI token hints (future: use to augment core tokens)
-    // (Not used to modify tokens by default, but can be logged/applied if you turn it on.)
-    const _aiHints = await ai.proposeTokenHints(apiFields, modelFields);
-    // (You can inject hints into scoring if desired.)
+    // === Step 0: Optional AI token hints (cached)
+    let _aiHints = null;
+    if (options.aiHints) {
+      _aiHints = await this.cacheService.getAiHints(apiFields, modelFields);
+      if (!_aiHints) {
+        _aiHints = await ai.proposeTokenHints(apiFields, modelFields);
+        await this.cacheService.cacheAiHints(apiFields, modelFields, _aiHints);
+      }
+    }
 
     // === Step 1: High-precision: exact normalized equality OR core-token containment
     const takenModel = new Set<string>();
@@ -135,7 +170,7 @@ export class ComparisonService {
       return a.field_name.localeCompare(b.field_name);
     });
 
-    return {
+    const result = {
       api_name: this.detectApiName(apiDoc) ?? 'API Comparison',
       validation_date: new Date().toISOString(),
       total_fields_compared: apiFields.length + modelFields.length,
@@ -154,6 +189,15 @@ export class ComparisonService {
           reason: m.reason
         }))
     };
+
+    // Cache the final result
+    await this.cacheService.cacheComparisonResult(apiDoc, modelSchema, options, result);
+
+    // Record performance metrics
+    const executionTime = Date.now() - startTime;
+    this.performanceService.recordComparison(executionTime);
+
+    return result;
   }
 
   /** Exposed for other modules/tests */
