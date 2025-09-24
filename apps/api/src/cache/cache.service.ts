@@ -1,12 +1,22 @@
-import { Injectable, Inject } from '@nestjs/common';
-import { CACHE_MANAGER } from '@nestjs/cache-manager';
-import { Cache } from 'cache-manager';
+import { Injectable, Logger } from '@nestjs/common';
 import { createHash } from 'crypto';
-import { CACHE_KEYS, CACHE_TTL } from './cache.config';
+import { CACHE_KEYS, CACHE_TTL, getCacheConfig } from './cache.config';
+
+interface CacheEntry {
+  value: any;
+  expiry: number;
+}
 
 @Injectable()
 export class CacheService {
-  constructor(@Inject(CACHE_MANAGER) private cacheManager: Cache) {}
+  private readonly logger = new Logger(CacheService.name);
+  private cache = new Map<string, CacheEntry>();
+  private readonly config = getCacheConfig();
+
+  constructor() {
+    // Clean up expired entries every 5 minutes
+    setInterval(() => this.cleanupExpired(), 5 * 60 * 1000);
+  }
 
   /**
    * Generate a cache key based on content hash
@@ -18,11 +28,61 @@ export class CacheService {
   }
 
   /**
+   * Set cache entry
+   */
+  private set(key: string, value: any, ttl: number = this.config.ttl): void {
+    // Remove oldest entries if at max capacity
+    if (this.cache.size >= this.config.max) {
+      const firstKey = this.cache.keys().next().value;
+      if (firstKey) this.cache.delete(firstKey);
+    }
+
+    this.cache.set(key, {
+      value,
+      expiry: Date.now() + ttl,
+    });
+  }
+
+  /**
+   * Get cache entry
+   */
+  private get<T = any>(key: string): T | null {
+    const entry = this.cache.get(key);
+    if (!entry) return null;
+
+    if (Date.now() > entry.expiry) {
+      this.cache.delete(key);
+      return null;
+    }
+
+    return entry.value;
+  }
+
+  /**
+   * Clean up expired entries
+   */
+  private cleanupExpired(): void {
+    const now = Date.now();
+    let cleaned = 0;
+    
+    for (const [key, entry] of this.cache.entries()) {
+      if (now > entry.expiry) {
+        this.cache.delete(key);
+        cleaned++;
+      }
+    }
+
+    if (cleaned > 0) {
+      this.logger.debug(`Cleaned up ${cleaned} expired cache entries`);
+    }
+  }
+
+  /**
    * Cache file content with hash-based key
    */
   async cacheFileContent(content: string, parsedContent: any): Promise<void> {
     const key = this.generateKey(CACHE_KEYS.FILE_CONTENT, content);
-    await this.cacheManager.set(key, parsedContent, CACHE_TTL.LONG);
+    this.set(key, parsedContent, CACHE_TTL.LONG);
   }
 
   /**
@@ -30,7 +90,7 @@ export class CacheService {
    */
   async getFileContent(content: string): Promise<any | null> {
     const key = this.generateKey(CACHE_KEYS.FILE_CONTENT, content);
-    return await this.cacheManager.get(key);
+    return this.get(key);
   }
 
   /**
@@ -38,9 +98,8 @@ export class CacheService {
    */
   async cacheFlattenedApi(apiDoc: any, flattened: Map<string, any>): Promise<void> {
     const key = this.generateKey(CACHE_KEYS.FLATTENED_API, apiDoc);
-    // Convert Map to Object for caching
     const flattenedObj = Object.fromEntries(flattened);
-    await this.cacheManager.set(key, flattenedObj, CACHE_TTL.MEDIUM);
+    this.set(key, flattenedObj, CACHE_TTL.MEDIUM);
   }
 
   /**
@@ -48,7 +107,7 @@ export class CacheService {
    */
   async getFlattenedApi(apiDoc: any): Promise<Map<string, any> | null> {
     const key = this.generateKey(CACHE_KEYS.FLATTENED_API, apiDoc);
-    const cached = await this.cacheManager.get<Record<string, any>>(key);
+    const cached = this.get<Record<string, any>>(key);
     return cached ? new Map(Object.entries(cached)) : null;
   }
 
@@ -57,9 +116,8 @@ export class CacheService {
    */
   async cacheFlattenedModel(modelSchema: any, flattened: Map<string, any>): Promise<void> {
     const key = this.generateKey(CACHE_KEYS.FLATTENED_MODEL, modelSchema);
-    // Convert Map to Object for caching
     const flattenedObj = Object.fromEntries(flattened);
-    await this.cacheManager.set(key, flattenedObj, CACHE_TTL.MEDIUM);
+    this.set(key, flattenedObj, CACHE_TTL.MEDIUM);
   }
 
   /**
@@ -67,7 +125,7 @@ export class CacheService {
    */
   async getFlattenedModel(modelSchema: any): Promise<Map<string, any> | null> {
     const key = this.generateKey(CACHE_KEYS.FLATTENED_MODEL, modelSchema);
-    const cached = await this.cacheManager.get<Record<string, any>>(key);
+    const cached = this.get<Record<string, any>>(key);
     return cached ? new Map(Object.entries(cached)) : null;
   }
 
@@ -81,7 +139,7 @@ export class CacheService {
     result: any
   ): Promise<void> {
     const key = this.generateKey(CACHE_KEYS.COMPARISON_RESULT, { apiDoc, modelSchema, options });
-    await this.cacheManager.set(key, result, CACHE_TTL.LONG);
+    this.set(key, result, CACHE_TTL.LONG);
   }
 
   /**
@@ -89,7 +147,7 @@ export class CacheService {
    */
   async getComparisonResult(apiDoc: any, modelSchema: any, options: any): Promise<any | null> {
     const key = this.generateKey(CACHE_KEYS.COMPARISON_RESULT, { apiDoc, modelSchema, options });
-    return await this.cacheManager.get(key);
+    return this.get(key);
   }
 
   /**
@@ -97,7 +155,7 @@ export class CacheService {
    */
   async cacheNormalizedFields(fields: any[], normalizedData: any[]): Promise<void> {
     const key = this.generateKey(CACHE_KEYS.NORMALIZED_FIELDS, fields);
-    await this.cacheManager.set(key, normalizedData, CACHE_TTL.VERY_LONG);
+    this.set(key, normalizedData, CACHE_TTL.VERY_LONG);
   }
 
   /**
@@ -105,7 +163,7 @@ export class CacheService {
    */
   async getNormalizedFields(fields: any[]): Promise<any[] | null> {
     const key = this.generateKey(CACHE_KEYS.NORMALIZED_FIELDS, fields);
-    return await this.cacheManager.get<any[]>(key);
+    return this.get<any[]>(key);
   }
 
   /**
@@ -113,7 +171,7 @@ export class CacheService {
    */
   async cacheAiHints(apiFields: any[], modelFields: any[], hints: any): Promise<void> {
     const key = this.generateKey(CACHE_KEYS.AI_HINTS, { apiFields, modelFields });
-    await this.cacheManager.set(key, hints, CACHE_TTL.VERY_LONG);
+    this.set(key, hints, CACHE_TTL.VERY_LONG);
   }
 
   /**
@@ -121,32 +179,40 @@ export class CacheService {
    */
   async getAiHints(apiFields: any[], modelFields: any[]): Promise<any | null> {
     const key = this.generateKey(CACHE_KEYS.AI_HINTS, { apiFields, modelFields });
-    return await this.cacheManager.get(key);
+    return this.get(key);
   }
 
   /**
    * Clear all cache entries
    */
   async clearAll(): Promise<void> {
-    await this.cacheManager.reset();
+    this.cache.clear();
+    this.logger.log('All cache entries cleared');
   }
 
   /**
-   * Clear cache entries by pattern (if supported by the cache store)
+   * Clear cache entries by pattern
    */
   async clearByPattern(pattern: string): Promise<void> {
-    // This depends on the cache store implementation
-    // For Redis, we could use KEYS pattern, but it's not efficient
-    // For now, we'll just clear all cache
-    await this.clearAll();
+    let cleared = 0;
+    for (const key of this.cache.keys()) {
+      if (key.includes(pattern)) {
+        this.cache.delete(key);
+        cleared++;
+      }
+    }
+    this.logger.log(`Cleared ${cleared} cache entries matching pattern: ${pattern}`);
   }
 
   /**
    * Get cache statistics
    */
-  async getStats(): Promise<{ hits: number; misses: number } | null> {
-    // This would depend on the cache store implementation
-    // For now, return null as not all stores support stats
-    return null;
+  async getStats(): Promise<{ hits: number; misses: number; size: number; maxSize: number } | null> {
+    return {
+      hits: 0, // Simple implementation doesn't track hits/misses
+      misses: 0,
+      size: this.cache.size,
+      maxSize: this.config.max,
+    };
   }
 }

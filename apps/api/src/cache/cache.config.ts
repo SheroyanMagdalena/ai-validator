@@ -1,31 +1,13 @@
-import { CacheModuleOptions } from '@nestjs/cache-manager';
-import { redisStore } from 'cache-manager-redis-yet';
+export interface CacheConfig {
+  ttl: number; // Time to live in milliseconds
+  max: number; // Maximum number of items
+}
 
-export const getCacheConfig = async (): Promise<CacheModuleOptions> => {
-  const isProduction = process.env.NODE_ENV === 'production';
-  const redisUrl = process.env.REDIS_URL || 'redis://localhost:6379';
-
-  if (isProduction) {
-    // Use Redis in production
-    return {
-      store: await redisStore({
-        socket: {
-          host: process.env.REDIS_HOST || 'localhost',
-          port: parseInt(process.env.REDIS_PORT || '6379'),
-        },
-        password: process.env.REDIS_PASSWORD,
-        database: parseInt(process.env.REDIS_DATABASE || '0'),
-      }),
-      ttl: 30 * 60 * 1000, // 30 minutes default TTL
-      max: 1000, // Maximum number of items in cache
-    };
-  } else {
-    // Use in-memory cache for development
-    return {
-      ttl: 15 * 60 * 1000, // 15 minutes for development
-      max: 100, // Smaller cache for development
-    };
-  }
+export const getCacheConfig = (): CacheConfig => {
+  return {
+    ttl: 30 * 60 * 1000, // 30 minutes default TTL
+    max: 1000, // Maximum number of items in cache
+  };
 };
 
 export const CACHE_KEYS = {

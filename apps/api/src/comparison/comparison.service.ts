@@ -55,7 +55,7 @@ export class ComparisonService {
     const modelFields = [...modelMap.values()];
 
     // === Step 0: Optional AI token hints (cached)
-    let _aiHints = null;
+    let _aiHints: any = null;
     if (options.aiHints) {
       _aiHints = await this.cacheService.getAiHints(apiFields, modelFields);
       if (!_aiHints) {
