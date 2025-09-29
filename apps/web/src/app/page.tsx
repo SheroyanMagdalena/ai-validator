@@ -35,7 +35,6 @@ type Stage = "idle" | "upload" | "parsing" | "matching" | "report";
 export default function HomePage() {
   // File states
   const [apiFile, setApiFile] = useState<File | null>(null);
-  const [modelFile, setModelFile] = useState<File | null>(null);
 
   // Loading & result states
   const [loading, setLoading] = useState(false);
@@ -98,47 +97,51 @@ export default function HomePage() {
     };
   }, []);
 
-  // When both files are selected, set stage to "upload"
-  useEffect(() => {
-    if (!loading && apiFile && modelFile && progress === 0) {
-      setStage("upload");
-    }
-  }, [apiFile, modelFile, loading, progress]);
+// When file is selected, set stage to "upload"
+useEffect(() => {
+  if (!loading && apiFile && progress === 0) {
+    setStage("upload");
+  }
+}, [apiFile, loading, progress]);
+
 
   // Handle form submit to upload files for comparison
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    if (!apiFile || !modelFile) {
-      setError("Please select both files.");
-      return;
-    }
-    setResult(null);
-    const formData = new FormData();
-    formData.append("apiFile", apiFile);
-    formData.append("modelFile", modelFile);
-    setLoading(true);
-    beginTimers();
+const handleSubmit = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setError(null);
 
-    try {
-      const res = await fetch(`${apiBase}/comparison/upload`, {
-        method: "POST",
-        body: formData,
-      });
-      if (!res.ok) {
-        const text = await res.text();
-        throw new Error(text || `Request failed (${res.status})`);
-      }
-      const data: CompareResult = await res.json();
-      setResult(data);
-      setActiveTab("overview");
-    } catch (err: any) {
-      setError(err.message || "Something went wrong");
-    } finally {
-      endTimers();
-      setLoading(false);
+  if (!apiFile) {
+    setError("Please select an API file.");
+    return;
+  }
+
+  setResult(null);
+  const formData = new FormData();
+  formData.append("api", apiFile);
+
+  setLoading(true);
+  beginTimers();
+
+  try {
+    const res = await fetch(`${apiBase}/comparison/upload`, {
+      method: "POST",
+      body: formData,
+    });
+    if (!res.ok) {
+      const text = await res.text();
+      throw new Error(text || `Request failed (${res.status})`);
     }
-  };
+    const data: CompareResult = await res.json();
+    setResult(data);
+    setActiveTab("overview");
+  } catch (err: any) {
+    setError(err.message || "Something went wrong");
+  } finally {
+    endTimers();
+    setLoading(false);
+  }
+};
+
 
   // Calculate stats for UI
   const matchedFields = result?.fields?.filter(f => f.status === 'matched') || [];
@@ -177,66 +180,54 @@ export default function HomePage() {
       </p>
 
       {/* Upload Form */}
-      <form
-        onSubmit={handleSubmit}
-        className="grid gap-6 p-6 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 mb-8"
+<form
+  onSubmit={handleSubmit}
+  className="grid gap-6 p-6 border border-gray-200 dark:border-gray-700 rounded-lg bg-white dark:bg-gray-900 mb-8"
+>
+  {/* API File DropZone */}
+  <div className="grid gap-2">
+    <span className="font-medium text-lg">API file (.json / .yaml)</span>
+    <DropZone
+      accept={[".json", ".yaml", ".yml", "application/json", "text/yaml"]}
+      fileName={apiFile?.name}
+      onFile={setApiFile}
+      pasteHint="Paste JSON/YAML here (⌘/Ctrl+V)"
+    />
+  </div>
+
+  {/* Buttons */}
+  <div className="flex items-center gap-3">
+    <button
+      type="submit"
+      disabled={loading || !apiFile}
+      className={`px-6 py-3 rounded text-white text-lg font-medium transition ${
+        loading ? "bg-gray-400 cursor-not-allowed" : "bg-gray-900 hover:bg-gray-800"
+      }`}
+    >
+      {loading ? "Comparing…" : "Compare"}
+    </button>
+    {result && (
+      <button
+        type="button"
+        onClick={() => {
+          setResult(null);
+          setShowModal(false);
+          setProgress(0);
+          setElapsedMs(0);
+          setApiFile(null);
+          setStage("idle");
+          setActiveTab("overview");
+        }}
+        className="px-4 py-3 rounded border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
       >
-        {/* API File DropZone */}
-        <div className="grid gap-2">
-          <span className="font-medium text-lg">API file (.json / .yaml)</span>
-          <DropZone
-            accept={[".json", ".yaml", ".yml", "application/json", "text/yaml"]}
-            fileName={apiFile?.name}
-            onFile={setApiFile}
-            pasteHint="Paste JSON/YAML here (⌘/Ctrl+V)"
-          />
-        </div>
+        Reset
+      </button>
+    )}
+  </div>
 
-        {/* Data Model DropZone */}
-        <div className="grid gap-2">
-          <span className="font-medium text-lg">Data model file (.json)</span>
-          <DropZone
-            accept={[".json", "application/json"]}
-            fileName={modelFile?.name}
-            onFile={setModelFile}
-            pasteHint="Paste JSON here (⌘/Ctrl+V)"
-          />
-        </div>
-
-        {/* Buttons */}
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            disabled={loading || !apiFile || !modelFile}
-            className={`px-6 py-3 rounded text-white text-lg font-medium transition ${
-              loading ? "bg-gray-400 cursor-not-allowed" : "bg-gray-900 hover:bg-gray-800"
-            }`}
-          >
-            {loading ? "Comparing…" : "Compare"}
-          </button>
-          {result && (
-            <button
-              type="button"
-              onClick={() => {
-                setResult(null);
-                setShowModal(false);
-                setProgress(0);
-                setElapsedMs(0);
-                setApiFile(null);
-                setModelFile(null);
-                setStage("idle");
-                setActiveTab("overview");
-              }}
-              className="px-4 py-3 rounded border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
-            >
-              Reset
-            </button>
-          )}
-        </div>
-
-        {/* Error message */}
-        {error && <div className="text-red-600 text-lg mt-2">{error}</div>}
-      </form>
+  {/* Error message */}
+  {error && <div className="text-red-600 text-lg mt-2">{error}</div>}
+</form>
 
       {/* Results display */}
       {result && (

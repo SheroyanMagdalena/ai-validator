@@ -1,4 +1,11 @@
-export type PrimitiveType = 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'unknown';
+export type PrimitiveType =
+  | 'string'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'datetime'
+  | 'unknown';
 
 export interface FieldDescriptor {
   /** Full, original dotted path as seen in source (e.g., Person.patronymic) */
@@ -43,20 +50,24 @@ export interface CompareOptions {
   /** Enable AI (GPT-5) hints for token correspondences */
   aiHints?: boolean;
   /** API provider key etc. - optional */
-  aiConfig?: { provider?: 'openai'; model?: 'gpt-5-thinking' | string; apiKey?: string };
+  aiConfig?: {
+    provider?: 'openai';
+    model?: 'gpt-5-thinking' | string;
+    apiKey?: string;
+  };
 }
 
 export interface CompareResultField {
   field_name: string; // API leaf name (after normalization)
   status: 'matched' | 'unmatched' | 'extra' | 'missing';
   expected_type: string; // model type
-  actual_type: string;   // api type
+  actual_type: string; // api type
   expected_format: string | null;
   actual_format: string | null;
   issue: string;
   suggestion: string;
   confidence: number; // 0..1
-  rationale: string;  // human-readable reasoning
+  rationale: string; // human-readable reasoning
 }
 
 export interface CompareResult {
@@ -75,4 +86,16 @@ export interface CompareResult {
     score: number;
     reason: MatchReason;
   }>;
+}
+
+/**
+ * Wrapper result when comparing an API against multiple DB models.
+ */
+export interface MultiModelCompareResult {
+  success: boolean;
+  api_name: string;
+  compared_models: CompareResult[]; // results for each chosen model
+  total_models: number; // total number of models found in DB
+  chosen_count: number; // how many were selected for comparison
+  message?: string; // optional error/warning (e.g., "no matching models")
 }
