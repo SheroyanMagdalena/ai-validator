@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ComparisonService } from './comparison.service';
-import { CompareOptions, MultiModelCompareResult, CompareResult } from './types';
+import { CompareOptions, MultiModelCompareResult, CompareResult, UploadResponse } from './types';
 import { CacheService } from '../cache/cache.service';
 import { PerformanceService } from '../cache/performance.service';
 import { FileValidationService } from '../validation/file-validation.service';
@@ -37,6 +37,53 @@ function parseTextToObject(buf: Buffer, label: string): any {
     /* fallthrough */
   }
   throw new BadRequestException(`${label} must be valid JSON or YAML`);
+}
+
+/**
+ * Detect if the uploaded document is a data model (JSON Schema) vs OpenAPI specification
+ */
+function detectDocumentType(doc: any): 'data-model' | 'openapi' | 'unknown' {
+  if (!doc || typeof doc !== 'object') {
+    return 'unknown';
+  }
+
+  // Check for OpenAPI indicators
+  const hasOpenApiStructure = !!(
+    doc.openapi ||                          // OpenAPI 3.x version field
+    doc.swagger ||                          // Swagger 2.x version field
+    doc.paths ||                            // API paths
+    doc.info ||                             // API info
+    (doc.components && doc.components.schemas) // OpenAPI components
+  );
+
+  // Check for JSON Schema indicators
+  const hasJsonSchemaStructure = !!(
+    doc.$schema ||                          // JSON Schema version
+    (doc.type === 'object' && doc.properties) || // Object with properties
+    doc.definitions ||                      // Schema definitions
+    (doc.title && doc.type && !doc.paths)  // Schema with title/type but no paths
+  );
+
+  // If it has OpenAPI structure, it's an API spec
+  if (hasOpenApiStructure && !hasJsonSchemaStructure) {
+    return 'openapi';
+  }
+
+  // If it has JSON Schema structure but no OpenAPI structure, it's a data model
+  if (hasJsonSchemaStructure && !hasOpenApiStructure) {
+    return 'data-model';
+  }
+
+  // If it has both or neither, try to determine based on content
+  if (doc.paths || doc.info?.title || doc.openapi || doc.swagger) {
+    return 'openapi';
+  }
+
+  if (doc.type === 'object' || doc.$schema || doc.definitions) {
+    return 'data-model';
+  }
+
+  return 'unknown';
 }
 
 @Controller('comparison')
@@ -109,33 +156,57 @@ export class ComparisonController {
   async uploadAndCompare(
     @UploadedFile() apiFile: Express.Multer.File,
     @Body() body: FileUploadDto,
-  ): Promise<CompareResult> {
+  ): Promise<CompareResult | UploadResponse> {
     if (!apiFile) {
       throw new BadRequestException('Missing API file');
     }
 
-    // Parse API file
+    // Parse uploaded file
     let content = apiFile.buffer.toString('utf8');
     content = this.sanitizationService.sanitizeContent(content);
 
-    let apiDoc: any;
+    let uploadedDoc: any;
     try {
-      apiDoc = JSON.parse(content);
+      uploadedDoc = JSON.parse(content);
     } catch {
       try {
-        apiDoc = yaml.load(content, { schema: yaml.JSON_SCHEMA, json: true });
+        uploadedDoc = yaml.load(content, { schema: yaml.JSON_SCHEMA, json: true });
       } catch (yamlError) {
-        throw new BadRequestException('API file must be valid JSON or YAML');
+        throw new BadRequestException('Uploaded file must be valid JSON or YAML');
       }
     }
 
-    if (!apiDoc || typeof apiDoc !== 'object') {
+    if (!uploadedDoc || typeof uploadedDoc !== 'object') {
       throw new BadRequestException(
-        'API file must contain a valid object or array',
+        'Uploaded file must contain a valid object or array',
       );
     }
 
-    apiDoc = this.sanitizationService.sanitizeJson(apiDoc);
+    uploadedDoc = this.sanitizationService.sanitizeJson(uploadedDoc);
+
+    // Detect document type
+    const docType = detectDocumentType(uploadedDoc);
+
+    if (docType === 'data-model') {
+      return {
+        success: false,
+        document_type: 'data-model',
+        message: 'Data model detected: The uploaded file appears to be a data model (JSON Schema) rather than an API specification. This endpoint is designed to compare OpenAPI/Swagger specifications against data models stored in the database. To proceed, please upload an OpenAPI specification file that describes API endpoints, request/response schemas, and other API documentation.',
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    if (docType === 'unknown') {
+      return {
+        success: false,
+        document_type: 'unknown',
+        message: 'Unrecognized format: The uploaded file does not appear to be a valid OpenAPI specification or data model. Please ensure your file contains proper OpenAPI/Swagger structure with paths, info, and other API specification elements.',
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    // If we get here, it should be an OpenAPI spec - return the original CompareResult format
+    const apiDoc = uploadedDoc;
 
     // Parse options (optional)
     let options: CompareOptions = {};
@@ -147,6 +218,7 @@ export class ComparisonController {
       };
     }
 
+    // Return the comparison result directly (preserving original API contract)
     return this.service.compare(apiDoc, options);
   }
 }

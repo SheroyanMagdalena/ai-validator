@@ -99,3 +99,14 @@ export interface MultiModelCompareResult {
   chosen_count: number; // how many were selected for comparison
   message?: string; // optional error/warning (e.g., "no matching models")
 }
+
+/**
+ * Response for upload endpoint that can handle both comparison results and informational messages
+ */
+export interface UploadResponse {
+  success: boolean;
+  message?: string;
+  document_type?: 'openapi' | 'data-model' | 'unknown';
+  comparison_result?: CompareResult;
+  timestamp: string;
+}
