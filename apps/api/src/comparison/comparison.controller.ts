@@ -12,7 +12,7 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { ComparisonService } from './comparison.service';
-import { CompareOptions, MultiModelCompareResult } from './types';
+import { CompareOptions, MultiModelCompareResult, CompareResult } from './types';
 import { CacheService } from '../cache/cache.service';
 import { PerformanceService } from '../cache/performance.service';
 import { FileValidationService } from '../validation/file-validation.service';
@@ -109,7 +109,7 @@ export class ComparisonController {
   async uploadAndCompare(
     @UploadedFile() apiFile: Express.Multer.File,
     @Body() body: FileUploadDto,
-  ): Promise<MultiModelCompareResult> {
+  ): Promise<CompareResult> {
     if (!apiFile) {
       throw new BadRequestException('Missing API file');
     }

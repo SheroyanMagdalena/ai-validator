@@ -117,7 +117,7 @@ const handleSubmit = async (e: React.FormEvent) => {
 
   setResult(null);
   const formData = new FormData();
-  formData.append("api", apiFile);
+  formData.append("file", apiFile);
 
   setLoading(true);
   beginTimers();

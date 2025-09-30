@@ -28,7 +28,7 @@ export class ComparisonService {
    * Compare OpenAPI spec against all models in DB.
    * Will filter models that match by title/description.
    */
-  async compare(apiDoc: any, options: CompareOptions = {}): Promise<any> {
+  async compare(apiDoc: any, options: CompareOptions = {}): Promise<CompareResult> {
     const models = await this.db.collection('data').find().toArray();
     if (!models || models.length === 0) {
       throw new Error('No data models found in database');
@@ -37,7 +37,19 @@ export class ComparisonService {
     // Pick relevant models
     const chosenModels = this.filterMatchingModels(apiDoc, models);
     if (chosenModels.length === 0) {
-      return { success: false, message: 'No matching models found for given API' };
+      // Return a default empty result if no models match
+      return {
+        api_name: this.detectApiName(apiDoc) ?? 'API Comparison',
+        validation_date: new Date().toISOString(),
+        total_fields_compared: 0,
+        matched_fields: 0,
+        unmatched_fields: 0,
+        extra_fields: 0,
+        missing_fields: 0,
+        accuracy_score: 0,
+        fields: [],
+        matches: [],
+      };
     }
 
     // Run full comparison for each chosen model
@@ -47,13 +59,12 @@ export class ComparisonService {
       results.push(result);
     }
 
-    return {
-      success: true,
-      api_name: this.detectApiName(apiDoc) ?? 'API Comparison',
-      compared_models: results,
-      total_models: models.length,
-      chosen_count: chosenModels.length,
-    };
+    // Return the result with the highest accuracy score
+    const bestResult = results.reduce((best, current) => 
+      current.accuracy_score > best.accuracy_score ? current : best
+    );
+
+    return bestResult;
   }
 
   /**
@@ -257,11 +268,15 @@ export class ComparisonService {
 
   private filterMatchingModels(apiDoc: any, models: any[]): any[] {
     const apiText = JSON.stringify(apiDoc).toLowerCase();
-    return models.filter(
+    const filteredModels = models.filter(
       (m) =>
         (m.title && apiText.includes(m.title.toLowerCase())) ||
         (m.description && apiText.includes(m.description.toLowerCase())),
     );
+    
+    // If no models match by title/description, return all models for comparison
+    // This allows the system to work even when API doesn't contain model-specific keywords
+    return filteredModels.length > 0 ? filteredModels : models;
   }
 
   flattenOpenApiToLeafMap(doc: any) {
