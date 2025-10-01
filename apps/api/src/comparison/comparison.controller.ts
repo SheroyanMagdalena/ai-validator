@@ -158,28 +158,93 @@ export class ComparisonController {
     @Body() body: FileUploadDto,
   ): Promise<CompareResult | UploadResponse> {
     if (!apiFile) {
-      throw new BadRequestException('Missing API file');
+      return {
+        success: false,
+        document_type: 'unknown',
+        message: 'No file uploaded: Please select a file to upload. The system expects an OpenAPI/Swagger specification in JSON or YAML format.',
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    // Check file extension and MIME type
+    const allowedExtensions = ['.json', '.yaml', '.yml', '.txt'];
+    const allowedMimeTypes = [
+      'application/json',
+      'text/json',
+      'text/yaml',
+      'text/yml',
+      'application/yaml',
+      'application/x-yaml',
+      'text/plain',
+    ];
+
+    const fileExtension = apiFile.originalname ? 
+      apiFile.originalname.toLowerCase().substring(apiFile.originalname.lastIndexOf('.')) : '';
+    
+    if (fileExtension && !allowedExtensions.includes(fileExtension)) {
+      return {
+        success: false,
+        document_type: 'unknown',
+        message: `Invalid file format: The file extension "${fileExtension}" is not supported. Please upload a file with one of these extensions: ${allowedExtensions.join(', ')}. The system expects JSON or YAML format files containing OpenAPI specifications.`,
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    if (apiFile.mimetype && !allowedMimeTypes.includes(apiFile.mimetype)) {
+      return {
+        success: false,
+        document_type: 'unknown',
+        message: `Unsupported file type: The file type "${apiFile.mimetype}" is not supported. Please upload a JSON or YAML file. Supported types include: application/json, text/yaml, application/yaml.`,
+        timestamp: new Date().toISOString(),
+      };
     }
 
     // Parse uploaded file
-    let content = apiFile.buffer.toString('utf8');
-    content = this.sanitizationService.sanitizeContent(content);
+    let content: string;
+    try {
+      content = apiFile.buffer.toString('utf8');
+      content = this.sanitizationService.sanitizeContent(content);
+    } catch (encodingError) {
+      return {
+        success: false,
+        document_type: 'unknown',
+        message: 'File encoding error: Unable to read the file content. Please ensure the file is saved in UTF-8 encoding and contains valid text content.',
+        timestamp: new Date().toISOString(),
+      };
+    }
+
+    if (!content || content.trim().length === 0) {
+      return {
+        success: false,
+        document_type: 'unknown',
+        message: 'Empty file: The uploaded file appears to be empty. Please upload a file containing a valid OpenAPI specification in JSON or YAML format.',
+        timestamp: new Date().toISOString(),
+      };
+    }
 
     let uploadedDoc: any;
     try {
       uploadedDoc = JSON.parse(content);
-    } catch {
+    } catch (jsonError) {
       try {
         uploadedDoc = yaml.load(content, { schema: yaml.JSON_SCHEMA, json: true });
       } catch (yamlError) {
-        throw new BadRequestException('Uploaded file must be valid JSON or YAML');
+        return {
+          success: false,
+          document_type: 'unknown',
+          message: 'Invalid file format: The file content is not valid JSON or YAML. Please check your file syntax and ensure it contains properly formatted JSON or YAML content. Common issues include missing quotes, trailing commas, or incorrect indentation.',
+          timestamp: new Date().toISOString(),
+        };
       }
     }
 
     if (!uploadedDoc || typeof uploadedDoc !== 'object') {
-      throw new BadRequestException(
-        'Uploaded file must contain a valid object or array',
-      );
+      return {
+        success: false,
+        document_type: 'unknown',
+        message: 'Invalid content structure: The file must contain a valid JSON object or YAML document. Simple strings, numbers, or arrays at the root level are not supported. Please ensure your file contains a structured object with properties.',
+        timestamp: new Date().toISOString(),
+      };
     }
 
     uploadedDoc = this.sanitizationService.sanitizeJson(uploadedDoc);

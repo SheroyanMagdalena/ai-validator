@@ -216,11 +216,14 @@ const handleSubmit = async (e: React.FormEvent) => {
   <div className="grid gap-2">
     <span className="font-medium text-lg">API file (.json / .yaml)</span>
     <DropZone
-      accept={[".json", ".yaml", ".yml", "application/json", "text/yaml"]}
+      accept={[".json", ".yaml", ".yml", ".txt", "application/json", "text/yaml", "application/yaml", "text/plain"]}
       fileName={apiFile?.name}
       onFile={setApiFile}
       pasteHint="Paste JSON/YAML here (⌘/Ctrl+V)"
     />
+    <div className="text-sm text-gray-600 dark:text-gray-400">
+      <strong>Supported formats:</strong> JSON (.json) or YAML (.yaml, .yml) files containing OpenAPI/Swagger specifications
+    </div>
   </div>
 
   {/* Buttons */}
@@ -813,16 +816,46 @@ function DropZone({
   const matchesAccept = (file: File) => {
     const name = file.name.toLowerCase();
     const type = file.type;
-    return accept.some((a) => (a.startsWith(".") ? name.endsWith(a) : type === a));
+    
+    // Check file extensions
+    const validExtensions = ['.json', '.yaml', '.yml', '.txt'];
+    const hasValidExtension = validExtensions.some(ext => name.endsWith(ext));
+    
+    // Check MIME types
+    const validMimeTypes = [
+      'application/json',
+      'text/json', 
+      'text/yaml',
+      'text/yml',
+      'application/yaml',
+      'application/x-yaml',
+      'text/plain'
+    ];
+    const hasValidMimeType = validMimeTypes.includes(type);
+    
+    return hasValidExtension || hasValidMimeType;
   };
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const file = files[0];
+    
     if (!matchesAccept(file)) {
-      setError(`Unsupported file type: ${file.type || file.name}`);
+      const extension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+      if (extension) {
+        setError(`Unsupported file type: "${extension}" files are not supported. Please upload a .json, .yaml, or .yml file containing an OpenAPI specification.`);
+      } else {
+        setError(`File type "${file.type || 'unknown'}" is not supported. Please upload a JSON or YAML file containing an OpenAPI specification.`);
+      }
       return;
     }
+    
+    // Check file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      setError(`File too large: The file size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds the 10MB limit. Please use a smaller file.`);
+      return;
+    }
+    
     setError(null);
     onFile(file);
   };
@@ -836,16 +869,28 @@ function DropZone({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const text = e.clipboardData.getData("text");
-    if (text) {
+    if (text && text.trim()) {
       try {
+        // Try parsing as JSON first
         const parsed = JSON.parse(text);
         const blob = new Blob([JSON.stringify(parsed, null, 2)], { type: "application/json" });
         const file = new File([blob], `pasted-${Date.now()}.json`, { type: "application/json" });
         setError(null);
         onFile(file);
-      } catch (err) {
-        setError("Pasted text is not valid JSON");
+      } catch (jsonError) {
+        // If not JSON, treat as YAML and let the server validate it
+        if (text.includes(':') && (text.includes('\n') || text.includes('  '))) {
+          // Looks like YAML structure
+          const blob = new Blob([text], { type: "application/yaml" });
+          const file = new File([blob], `pasted-${Date.now()}.yaml`, { type: "application/yaml" });
+          setError(null);
+          onFile(file);
+        } else {
+          setError("Invalid format: Pasted text is neither valid JSON nor YAML. Please check the syntax and try again.");
+        }
       }
+    } else {
+      setError("No content: Nothing was pasted. Please copy some JSON or YAML content and try again.");
     }
   };
 
