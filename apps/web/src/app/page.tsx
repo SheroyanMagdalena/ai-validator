@@ -204,7 +204,7 @@ const handleSubmit = async (e: React.FormEvent) => {
       {/* Header & Description */}
       <h1 className="text-3xl font-bold mb-2 tracking-tight">AI Validator – Compare API vs Data Model</h1>
       <p className="text-lg text-gray-700 dark:text-gray-300 mb-4 leading-relaxed">
-        Upload your API sample/spec (JSON/YAML) and Data Model (JSON schema). Drag & drop files or paste JSON directly into the zones.
+        Drop in your API (JSON/YAML) and watch AI Validator snap it to the right data models.
       </p>
 
       {/* Upload Form */}
