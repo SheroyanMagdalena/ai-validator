@@ -13,6 +13,9 @@ import { scorePair } from './semanticMatcher';
 import { AiHintsProvider } from './aiHints';
 import { CacheService } from '../cache/cache.service';
 import { PerformanceService } from '../cache/performance.service';
+import { toCoreTokensFromName } from './normalization';
+
+type XSystemMappings = Record<string, Record<string, string>>;
 
 @Injectable()
 export class ComparisonService {
@@ -36,8 +39,13 @@ export class ComparisonService {
 
     // Pick relevant models
     const chosenModels = this.filterMatchingModels(apiDoc, models);
+
+    const comparedMeta = chosenModels.map((m: any) => ({      
+      id: m?._id ? String(m._id) : (m?.id ? String(m.id) : null),
+      title: m?.title ?? m?.name ?? null,
+      level: (m.__matchLevel as 'HIGH' | 'HM' | 'legacy' | 'all') ?? undefined,
+    }));
     if (chosenModels.length === 0) {
-      // Return a default empty result if no models match
       return {
         api_name: this.detectApiName(apiDoc) ?? 'API Comparison',
         validation_date: new Date().toISOString(),
@@ -64,6 +72,8 @@ export class ComparisonService {
       current.accuracy_score > best.accuracy_score ? current : best
     );
 
+    bestResult.models_compared_count = comparedMeta.length;
+    bestResult.models_compared = comparedMeta;
     return bestResult;
   }
 
@@ -145,7 +155,7 @@ export class ComparisonService {
         const reason = scorePair(a, m);
         if (reason.finalScore >= fuzzyThreshold && reason.typeCompatible) {
           if (!best || reason.finalScore > best.score) {
-            best = { api: a, model: m, score: reason.finalScore, reason };
+            best = { api: a, model: m, score: reason.finalScore, reason, kind: 'fuzzy' };
           }
         }
       }
@@ -160,57 +170,70 @@ export class ComparisonService {
     const matchedModelPaths = new Set(matches.map((m) => m.model.path));
     const fields: CompareResultField[] = [];
 
+    const modelId = modelSchema?._id ? String(modelSchema._id) : (modelSchema?.id ? String(modelSchema.id) : null);
+    const modelTitle = modelSchema?.title ?? modelSchema?.name ?? null;
+    const modelSystemCode = modelSchema?.['x-system-code'] ?? modelSchema?.systemCode ?? null;
+
     // Matched
-    for (const m of matches) {
-      fields.push({
-        field_name: m.api.leaf,
-        status: 'matched',
-        expected_type: m.model.type,
-        actual_type: m.api.type,
-        expected_format: m.model.format ?? null,
-        actual_format: m.api.format ?? null,
-        issue: '',
-        suggestion: '',
-        confidence: Number(m.score.toFixed(3)),
-        rationale: this.renderRationale(m),
-      });
-    }
+for (const m of matches) {
+  fields.push({
+    field_name: m.api.leaf,
+    status: 'matched',
+    api_path: m.api.path,
+    model_path: m.model.path,
+    resolution: m.kind ?? 'fuzzy',
+    expected_type: m.model.type,
+    actual_type: m.api.type,
+    expected_format: m.model.format ?? null,
+    actual_format: m.api.format ?? null,
+    issue: '',
+    suggestion: '',
+    confidence: Number(m.score.toFixed(3)),
+    rationale: this.renderRationale(m),
+  });
+}
 
     // Extra
-    for (const a of apiFields) {
-      if (!matchedApiPaths.has(a.path)) {
-        fields.push({
-          field_name: a.leaf,
-          status: 'extra',
-          expected_type: '',
-          actual_type: a.type,
-          expected_format: null,
-          actual_format: a.format ?? null,
-          issue: `Field '${a.leaf}' appears only in API.`,
-          suggestion: 'Consider mapping or marking as non-essential.',
-          confidence: 0.5,
-          rationale: 'No compatible model field above threshold.',
-        });
-      }
-    }
+for (const a of apiFields) {
+  if (!matchedApiPaths.has(a.path)) {
+    fields.push({
+      field_name: a.leaf,
+      status: 'extra',
+      api_path: a.path,
+      model_path: null,
+      resolution: null,
+      expected_type: '',
+      actual_type: a.type,
+      expected_format: null,
+      actual_format: a.format ?? null,
+      issue: `Field '${a.leaf}' appears only in API.`,
+      suggestion: 'Consider mapping or marking as non-essential.',
+      confidence: 0.5,
+      rationale: 'No compatible model field above threshold.',
+    });
+  }
+}
 
     // Missing
-    for (const m of modelFields) {
-      if (!matchedModelPaths.has(m.path)) {
-        fields.push({
-          field_name: m.leaf,
-          status: 'missing',
-          expected_type: m.type,
-          actual_type: '',
-          expected_format: m.format ?? null,
-          actual_format: null,
-          issue: `Model field '${m.leaf}' has no API counterpart.`,
-          suggestion: 'Check upstream API or adjust mapping rules.',
-          confidence: 0.0,
-          rationale: 'No API field matched.',
-        });
-      }
-    }
+for (const m of modelFields) {
+  if (!matchedModelPaths.has(m.path)) {
+    fields.push({
+      field_name: m.leaf,
+      status: 'missing',
+      api_path: null,
+      model_path: m.path,
+      resolution: null,
+      expected_type: m.type,
+      actual_type: '',
+      expected_format: m.format ?? null,
+      actual_format: null,
+      issue: `Model field '${m.leaf}' has no API counterpart.`,
+      suggestion: 'Check upstream API or adjust mapping rules.',
+      confidence: 0.0,
+      rationale: 'No API field matched.',
+    });
+  }
+}
 
     const extra = apiFields.length - matchedApiPaths.size;
     const missing = modelFields.length - matchedModelPaths.size;
@@ -228,25 +251,30 @@ export class ComparisonService {
       return a.field_name.localeCompare(b.field_name);
     });
 
-    const result: CompareResult = {
-      api_name: this.detectApiName(apiDoc) ?? 'API Comparison',
-      validation_date: new Date().toISOString(),
-      total_fields_compared: apiFields.length + modelFields.length,
-      matched_fields: matched,
-      unmatched_fields: extra + missing,
-      extra_fields: extra,
-      missing_fields: missing,
-      accuracy_score: Number(accuracy.toFixed(3)),
-      fields,
-      matches: matches
-        .sort((x, y) => y.score - x.score)
-        .map((m) => ({
-          api_field: m.api.path,
-          model_field: m.model.path,
-          score: Number(m.score.toFixed(3)),
-          reason: m.reason,
-        })),
-    };
+const result: CompareResult = {
+  api_name: this.detectApiName(apiDoc) ?? 'API Comparison',
+  model_id: modelId,
+  model_title: modelTitle,
+  model_system_code: modelSystemCode,
+
+  validation_date: new Date().toISOString(),
+  total_fields_compared: apiFields.length + modelFields.length,
+  matched_fields: matched,
+  unmatched_fields: extra + missing,
+  extra_fields: extra,
+  missing_fields: missing,
+  accuracy_score: Number(accuracy.toFixed(3)),
+  fields,
+  matches: matches
+    .sort((x, y) => y.score - x.score)
+    .map((m) => ({
+      api_field: m.api.path,
+      model_field: m.model.path,
+      score: Number(m.score.toFixed(3)),
+      reason: m.reason,
+      match_type: m.kind ?? 'fuzzy',
+    })),
+};
 
     await this.cacheService.cacheComparisonResult(
       apiDoc,
@@ -261,23 +289,132 @@ export class ComparisonService {
   }
 
   // === Helpers
-
+ 
   private detectApiName(doc: any): string | null {
     return doc?.info?.title ?? null;
   }
+  
 
   private filterMatchingModels(apiDoc: any, models: any[]): any[] {
-    const apiText = JSON.stringify(apiDoc).toLowerCase();
-    const filteredModels = models.filter(
-      (m) =>
-        (m.title && apiText.includes(m.title.toLowerCase())) ||
-        (m.description && apiText.includes(m.description.toLowerCase())),
-    );
-    
-    // If no models match by title/description, return all models for comparison
-    // This allows the system to work even when API doesn't contain model-specific keywords
-    return filteredModels.length > 0 ? filteredModels : models;
+  // SYSTEM/MATCHING THRESHOLDS — tune these to be more/less selective
+  const SYSTEM_CODE = 'AVV' as const;
+
+  // HIGH match: clearly relevant models
+  const HIGH_MIN_HITS = 5;       // at least 5 token intersections
+  const HIGH_MIN_JACCARD = 0.20; // or >= 0.20 token-set overlap
+
+  // HIGH/MEDIUM match: still relevant, a bit looser
+  const HM_MIN_HITS = 3;         // at least 3 token intersections
+  const HM_MIN_JACCARD = 0.14;   // or >= 0.14 overlap
+
+  // 1) Build API token bag (title, tags, schema names, and leaf fields)
+  const apiTokens = this.buildApiTokenSet(apiDoc);
+
+  // 2) Score every model by overlap with x-system-mappings[AVV]
+  type Scored = { model: any; hits: number; jaccard: number; level: 'HIGH' | 'HM' | 'NONE' };
+  const scored: Scored[] = models.map((m) => {
+    const sys: XSystemMappings | undefined = m['x-system-mappings'];
+    const avv = sys?.[SYSTEM_CODE];
+
+    if (!avv) {
+      return { model: m, hits: 0, jaccard: 0, level: 'NONE' };
+    }
+
+    // Gather model tokens from all mapping values (split on commas, normalize)
+    const modelTokens = new Set<string>();
+    for (const raw of Object.values(avv)) {
+      String(raw)
+        .split(',')
+        .map((s) => s.trim())
+        .forEach((piece) => {
+          for (const t of toCoreTokensFromName(piece)) modelTokens.add(t);
+        });
+    }
+
+    // Intersections & Jaccard
+    let hits = 0;
+    for (const t of modelTokens) if (apiTokens.has(t)) hits++;
+    const denom = modelTokens.size + apiTokens.size - hits;
+    const jaccard = denom <= 0 ? 0 : hits / denom;
+
+    // Classify level
+    let level: Scored['level'] = 'NONE';
+    if (hits >= HIGH_MIN_HITS || jaccard >= HIGH_MIN_JACCARD) {
+      level = 'HIGH';
+    } else if (hits >= HM_MIN_HITS || jaccard >= HM_MIN_JACCARD) {
+      level = 'HM';
+    }
+
+    return { model: m, hits, jaccard, level };
+  });
+
+  // 3) Keep HIGH first; if none, keep HIGH/MEDIUM; if still none — fallback to legacy substring check, else all
+  let kept = scored
+    .filter((s) => s.level === 'HIGH')
+    .sort((a, b) => (b.hits - a.hits) || (b.jaccard - a.jaccard))
+    .map((s) => s.model);
+
+  if (kept.length === 0) {
+    kept = scored
+      .filter((s) => s.level === 'HM')
+      .sort((a, b) => (b.hits - a.hits) || (b.jaccard - a.jaccard))
+      .map((s) => s.model);
   }
+
+  if (kept.length > 0) return kept;
+
+  // 4) Graceful fallback to your legacy behavior (so nothing breaks)
+  const apiText = JSON.stringify(apiDoc).toLowerCase();
+  const legacy = models.filter(
+    (m) =>
+      (m.title && apiText.includes(String(m.title).toLowerCase())) ||
+      (m.description && apiText.includes(String(m.description).toLowerCase())),
+  );
+
+  return legacy.length > 0 ? legacy : models;
+}
+
+/**
+ * Build a normalized token set from API title, tags, schema names, and leaf fields.
+ * Uses your existing flattener + normalization for consistency.
+ */
+private buildApiTokenSet(apiDoc: any): Set<string> {
+  const tokens = new Set<string>();
+  const pushTokens = (s?: string) => {
+    if (!s) return;
+    for (const t of toCoreTokensFromName(String(s))) tokens.add(t);
+  };
+
+  // info.title
+  pushTokens(apiDoc?.info?.title);
+
+  // tags
+  if (Array.isArray(apiDoc?.tags)) {
+    for (const t of apiDoc.tags) {
+      pushTokens(t?.name);
+      pushTokens(t?.description);
+    }
+  }
+
+  // components.schemas names
+  const schemas = apiDoc?.components?.schemas || {};
+  for (const k of Object.keys(schemas)) pushTokens(k);
+
+  // leaf fields (use cache if you already have it; here we reuse your cache service)
+  let apiMap = flattenOpenApiToLeafMap(apiDoc);
+  if (!apiMap) {
+    apiMap = flattenOpenApiToLeafMap(apiDoc);
+    // best-effort cache without awaiting (if you want)
+    this.cacheService?.cacheFlattenedApi?.(apiDoc, apiMap).catch(() => void 0);
+  }
+
+  for (const leaf of (apiMap ? Array.from(apiMap.values()) : [])) {
+    pushTokens(leaf.leaf);
+    for (const ct of leaf.coreTokens) tokens.add(ct);
+  }
+
+  return tokens;
+}
 
   flattenOpenApiToLeafMap(doc: any) {
     return flattenOpenApiToLeafMap(doc);
@@ -286,65 +423,65 @@ export class ComparisonService {
     return flattenModelToLeafMap(model);
   }
 
-  private findExactOrContained(
-    a: FieldDescriptor,
-    models: FieldDescriptor[],
-    taken: Set<string>,
-  ): FieldMatch | null {
-    const eq = models.find((m) => !taken.has(m.path) && a.norm === m.norm);
-    if (eq) {
-      const reason = {
-        modelField: eq.path,
-        apiField: a.path,
-        jwName: 1,
-        tokenJaccard: 1,
-        typeBonus: 0.08,
-        dateBias: 0,
-        synonymsBoost: 0,
-        finalScore: 1,
-        typeCompatible: true,
-        notes: ['normalized leaf equality'],
-        tokensCompared: { api: a.coreTokens, model: eq.coreTokens },
-      };
-      return { api: a, model: eq, score: 1, reason };
-    }
-
-    const aSet = new Set(a.coreTokens);
-    const candidates = models
-      .filter((m) => !taken.has(m.path))
-      .map((m) => {
-        const mSet = new Set(m.coreTokens);
-        let contained = true;
-        for (const tok of mSet)
-          if (!aSet.has(tok)) {
-            contained = false;
-            break;
-          }
-        return { m, contained };
-      })
-      .filter((x) => x.contained)
-      .map((x) => x.m);
-
-    if (candidates.length === 1) {
-      const m = candidates[0];
-      const reason = {
-        modelField: m.path,
-        apiField: a.path,
-        jwName: 0.9,
-        tokenJaccard: 1,
-        typeBonus: 0.08,
-        dateBias: 0,
-        synonymsBoost: 0.03,
-        finalScore: 0.97,
-        typeCompatible: true,
-        notes: ['core-token containment'],
-        tokensCompared: { api: a.coreTokens, model: m.coreTokens },
-      };
-      return { api: a, model: m, score: 0.97, reason };
-    }
-
-    return null;
+ private findExactOrContained(
+  a: FieldDescriptor,
+  models: FieldDescriptor[],
+  taken: Set<string>,
+): FieldMatch | null {
+  const eq = models.find((m) => !taken.has(m.path) && a.norm === m.norm);
+  if (eq) {
+    const reason = {
+      modelField: eq.path,
+      apiField: a.path,
+      jwName: 1,
+      tokenJaccard: 1,
+      typeBonus: 0.08,
+      dateBias: 0,
+      synonymsBoost: 0,
+      finalScore: 1,
+      typeCompatible: true,
+      notes: ['normalized leaf equality'],
+      tokensCompared: { api: a.coreTokens, model: eq.coreTokens },
+    };
+    return { api: a, model: eq, score: 1, reason, kind: 'exact' };
   }
+
+  const aSet = new Set(a.coreTokens);
+  const candidates = models
+    .filter((m) => !taken.has(m.path))
+    .map((m) => {
+      const mSet = new Set(m.coreTokens);
+      let contained = true;
+      for (const tok of mSet)
+        if (!aSet.has(tok)) {
+          contained = false;
+          break;
+        }
+      return { m, contained };
+    })
+    .filter((x) => x.contained)
+    .map((x) => x.m);
+
+  if (candidates.length === 1) {
+    const m = candidates[0];
+    const reason = {
+      modelField: m.path,
+      apiField: a.path,
+      jwName: 0.9,
+      tokenJaccard: 1,
+      typeBonus: 0.08,
+      dateBias: 0,
+      synonymsBoost: 0.03,
+      finalScore: 0.97,
+      typeCompatible: true,
+      notes: ['core-token containment'],
+      tokensCompared: { api: a.coreTokens, model: m.coreTokens },
+    };
+    return { api: a, model: m, score: 0.97, reason, kind: 'containment' };
+  }
+
+  return null;
+}
 
   private renderRationale(m: FieldMatch): string {
     const r = m.reason;
