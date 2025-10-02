@@ -111,3 +111,14 @@ export interface MultiModelCompareResult {
   chosen_count: number; 
   message?: string; 
 }
+
+/**
+ * Response for upload endpoint that can handle both comparison results and informational messages
+ */
+export interface UploadResponse {
+  success: boolean;
+  message?: string;
+  document_type?: 'openapi' | 'data-model' | 'unknown';
+  comparison_result?: CompareResult;
+  timestamp: string;
+}

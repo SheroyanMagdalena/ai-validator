@@ -29,6 +29,14 @@ type CompareResult = {
   summary_recommendation?: string;
 };
 
+type UploadResponse = {
+  success: boolean;
+  message?: string;
+  document_type?: 'openapi' | 'data-model' | 'unknown';
+  comparison_result?: CompareResult;
+  timestamp: string;
+};
+
 type Stage = "idle" | "upload" | "parsing" | "matching" | "report";
 
 // Main component
@@ -40,6 +48,7 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<CompareResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
 
   // Modal & tab states
   const [showModal, setShowModal] = useState(false);
@@ -109,6 +118,7 @@ useEffect(() => {
 const handleSubmit = async (e: React.FormEvent) => {
   e.preventDefault();
   setError(null);
+  setInfoMessage(null);
 
   if (!apiFile) {
     setError("Please select an API file.");
@@ -131,9 +141,27 @@ const handleSubmit = async (e: React.FormEvent) => {
       const text = await res.text();
       throw new Error(text || `Request failed (${res.status})`);
     }
-    const data: CompareResult = await res.json();
-    setResult(data);
-    setActiveTab("overview");
+    
+    // Check if the response is an UploadResponse or direct CompareResult
+    const data: UploadResponse | CompareResult = await res.json();
+    
+    // Check if it's an UploadResponse (has success field)
+    if ('success' in data) {
+      const uploadResponse = data as UploadResponse;
+      if (!uploadResponse.success) {
+        // Show the informational message instead of an error
+        setInfoMessage(uploadResponse.message || 'Unable to process the uploaded file.');
+        return;
+      } else if (uploadResponse.comparison_result) {
+        // Successful comparison wrapped in UploadResponse
+        setResult(uploadResponse.comparison_result);
+        setActiveTab("overview");
+      }
+    } else {
+      // Direct CompareResult (backward compatibility)
+      setResult(data as CompareResult);
+      setActiveTab("overview");
+    }
   } catch (err: any) {
     setError(err.message || "Something went wrong");
   } finally {
@@ -188,11 +216,14 @@ const handleSubmit = async (e: React.FormEvent) => {
   <div className="grid gap-2">
     <span className="font-medium text-lg">API file (.json / .yaml)</span>
     <DropZone
-      accept={[".json", ".yaml", ".yml", "application/json", "text/yaml"]}
+      accept={[".json", ".yaml", ".yml", ".txt", "application/json", "text/yaml", "application/yaml", "text/plain"]}
       fileName={apiFile?.name}
       onFile={setApiFile}
       pasteHint="Paste JSON/YAML here (⌘/Ctrl+V)"
     />
+    <div className="text-sm text-gray-600 dark:text-gray-400">
+      <strong>Supported formats:</strong> JSON (.json) or YAML (.yaml, .yml) files containing OpenAPI/Swagger specifications
+    </div>
   </div>
 
   {/* Buttons */}
@@ -217,6 +248,8 @@ const handleSubmit = async (e: React.FormEvent) => {
           setApiFile(null);
           setStage("idle");
           setActiveTab("overview");
+          setError(null);
+          setInfoMessage(null);
         }}
         className="px-4 py-3 rounded border border-gray-300 dark:border-gray-700 text-gray-800 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800"
       >
@@ -227,6 +260,23 @@ const handleSubmit = async (e: React.FormEvent) => {
 
   {/* Error message */}
   {error && <div className="text-red-600 text-lg mt-2">{error}</div>}
+  
+  {/* Info message for data models */}
+  {infoMessage && (
+    <div className="p-4 mt-4 border border-blue-200 bg-blue-50 dark:bg-blue-900 dark:border-blue-800 rounded-lg">
+      <div className="flex items-start gap-3">
+        <div className="flex-shrink-0 mt-1">
+          <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="currentColor" viewBox="0 0 20 20">
+            <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+          </svg>
+        </div>
+        <div>
+          <h3 className="text-lg font-medium text-blue-900 dark:text-blue-100 mb-2">File Type Information</h3>
+          <p className="text-blue-800 dark:text-blue-200">{infoMessage}</p>
+        </div>
+      </div>
+    </div>
+  )}
 </form>
 
       {/* Results display */}
@@ -766,16 +816,46 @@ function DropZone({
   const matchesAccept = (file: File) => {
     const name = file.name.toLowerCase();
     const type = file.type;
-    return accept.some((a) => (a.startsWith(".") ? name.endsWith(a) : type === a));
+    
+    // Check file extensions
+    const validExtensions = ['.json', '.yaml', '.yml', '.txt'];
+    const hasValidExtension = validExtensions.some(ext => name.endsWith(ext));
+    
+    // Check MIME types
+    const validMimeTypes = [
+      'application/json',
+      'text/json', 
+      'text/yaml',
+      'text/yml',
+      'application/yaml',
+      'application/x-yaml',
+      'text/plain'
+    ];
+    const hasValidMimeType = validMimeTypes.includes(type);
+    
+    return hasValidExtension || hasValidMimeType;
   };
 
   const handleFiles = (files: FileList | null) => {
     if (!files || files.length === 0) return;
     const file = files[0];
+    
     if (!matchesAccept(file)) {
-      setError(`Unsupported file type: ${file.type || file.name}`);
+      const extension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+      if (extension) {
+        setError(`Unsupported file type: "${extension}" files are not supported. Please upload a .json, .yaml, or .yml file containing an OpenAPI specification.`);
+      } else {
+        setError(`File type "${file.type || 'unknown'}" is not supported. Please upload a JSON or YAML file containing an OpenAPI specification.`);
+      }
       return;
     }
+    
+    // Check file size (10MB limit)
+    if (file.size > 10 * 1024 * 1024) {
+      setError(`File too large: The file size (${(file.size / 1024 / 1024).toFixed(1)}MB) exceeds the 10MB limit. Please use a smaller file.`);
+      return;
+    }
+    
     setError(null);
     onFile(file);
   };
@@ -789,16 +869,28 @@ function DropZone({
 
   const handlePaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
     const text = e.clipboardData.getData("text");
-    if (text) {
+    if (text && text.trim()) {
       try {
+        // Try parsing as JSON first
         const parsed = JSON.parse(text);
         const blob = new Blob([JSON.stringify(parsed, null, 2)], { type: "application/json" });
         const file = new File([blob], `pasted-${Date.now()}.json`, { type: "application/json" });
         setError(null);
         onFile(file);
-      } catch (err) {
-        setError("Pasted text is not valid JSON");
+      } catch (jsonError) {
+        // If not JSON, treat as YAML and let the server validate it
+        if (text.includes(':') && (text.includes('\n') || text.includes('  '))) {
+          // Looks like YAML structure
+          const blob = new Blob([text], { type: "application/yaml" });
+          const file = new File([blob], `pasted-${Date.now()}.yaml`, { type: "application/yaml" });
+          setError(null);
+          onFile(file);
+        } else {
+          setError("Invalid format: Pasted text is neither valid JSON nor YAML. Please check the syntax and try again.");
+        }
       }
+    } else {
+      setError("No content: Nothing was pasted. Please copy some JSON or YAML content and try again.");
     }
   };
 
