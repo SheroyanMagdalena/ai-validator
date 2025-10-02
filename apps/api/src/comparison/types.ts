@@ -1,18 +1,21 @@
-export type PrimitiveType = 'string' | 'integer' | 'number' | 'boolean' | 'date' | 'datetime' | 'unknown';
+export type PrimitiveType =
+  | 'string'
+  | 'integer'
+  | 'number'
+  | 'boolean'
+  | 'date'
+  | 'datetime'
+  | 'unknown';
+
+export type MatchKind = 'exact' | 'containment' | 'fuzzy';
 
 export interface FieldDescriptor {
-  /** Full, original dotted path as seen in source (e.g., Person.patronymic) */
   path: string;
-  /** Leaf name only (Parent.Child -> Child) */
   leaf: string;
-  /** Normalized name for equality (lowercased, punctuation removed) */
   norm: string;
-  /** Core tokens after reduction */
   coreTokens: string[];
-  /** Source-specific type and format hints */
   type: PrimitiveType;
   format?: string | null;
-  /** For debugging */
   meta?: Record<string, any>;
 }
 
@@ -35,6 +38,7 @@ export interface FieldMatch {
   model: FieldDescriptor;
   score: number;
   reason: MatchReason;
+  kind?: MatchKind; 
 }
 
 export interface CompareOptions {
@@ -42,37 +46,79 @@ export interface CompareOptions {
   fuzzyThreshold?: number;
   /** Enable AI (GPT-5) hints for token correspondences */
   aiHints?: boolean;
-  /** API provider key etc. - optional */
-  aiConfig?: { provider?: 'openai'; model?: 'gpt-5-thinking' | string; apiKey?: string };
+  aiConfig?: {
+    provider?: 'openai';
+    model?: 'gpt-5-thinking' | string;
+    apiKey?: string;
+  };
 }
 
 export interface CompareResultField {
-  field_name: string; // API leaf name (after normalization)
-  status: 'matched' | 'unmatched' | 'extra' | 'missing';
-  expected_type: string; // model type
-  actual_type: string;   // api type
+  field_name: string;
+  status: 'matched' | 'extra' | 'missing';
+  api_path?: string | null;
+  model_path?: string | null;
+  resolution?: MatchKind | null;
+  expected_type: string;
+  actual_type: string;
   expected_format: string | null;
   actual_format: string | null;
   issue: string;
   suggestion: string;
-  confidence: number; // 0..1
-  rationale: string;  // human-readable reasoning
+  confidence: number; 
+  rationale: string; 
 }
+
 
 export interface CompareResult {
   api_name: string;
+  model_id?: string | null;
+  model_title?: string | null;
+  model_system_code?: string | null;
   validation_date: string;
   total_fields_compared: number;
   matched_fields: number;
   unmatched_fields: number;
   extra_fields: number;
   missing_fields: number;
-  accuracy_score: number; // matched / (matched + unmatched + missing)
+  accuracy_score: number;
   fields: CompareResultField[];
   matches: Array<{
     api_field: string;
     model_field: string;
     score: number;
     reason: MatchReason;
+    match_type?: MatchKind;
+    
   }>;
+   models_compared_count?: number;
+  models_compared?: Array<{
+    id?: string | null;
+    title?: string | null;
+    level?: 'HIGH' | 'HM' | 'legacy' | 'all';
+    accuracy_score?: number; 
+  }>;
+}
+
+/**
+ * Wrapper result when comparing an API against multiple DB models.
+ */
+export interface MultiModelCompareResult {
+  success: boolean;
+  api_name: string;
+  compared_models: CompareResult[]; 
+  total_models: number; 
+  chosen_count: number; 
+  message?: string; 
+}
+
+/**
+ * Response for upload endpoint that can handle both comparison results and informational messages
+ */
+export interface UploadResponse {
+  success: boolean;
+  message?: string;
+  document_type?: 'openapi' | 'data-model' | 'unknown';
+  comparison_result?: CompareResult;
+  timestamp: string;
 }
